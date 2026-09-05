@@ -1,0 +1,15 @@
+{
+  "name": "Shams Orders",
+  "short_name": "Orders",
+  "description": "إدارة وتوزيع أوردرات شمس",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f6f4",
+  "theme_color": "#ef7200",
+  "lang": "ar",
+  "dir": "rtl",
+  "icons": [
+    { "src": "/shams-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/shams-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
