@@ -154,10 +154,10 @@ export function OrdersApp() {
     };
   }), [branches, orders]);
 
-  async function handleLogin(username: string, password: string) {
+  async function handleLogin(username: string, password: string, remember: boolean) {
     setLoading(true); setError("");
     try {
-      const nextUser = await login(username, password);
+      const nextUser = await login(username, password, remember);
       const [nextOrders, nextBranches] = await Promise.all([getOrders(), nextUser.role === "admin" ? getBranches() : Promise.resolve([])]);
       knownOrders.current = new Map(nextOrders.map((order) => [order.id, order]));
       setUser(nextUser); setOrders(nextOrders); setBranches(nextBranches);
@@ -266,11 +266,12 @@ function NotificationCenter({ items, onOpen, onClear }: { items: NotificationEve
   return <section className="notification-center" aria-label="آخر الإشعارات"><header><div><strong>الإشعارات</strong><small>آخر تحديثات الأوردرات</small></div>{items.length > 0 && <button onClick={onClear}>مسح الكل</button>}</header>{items.length ? <div className="notification-feed">{items.map((item) => <button key={item.id} onClick={() => onOpen(item)}><span className="notification-feed-icon"><Icon name="bell"/></span><span><strong>{item.title}</strong><small>{item.message}</small><time dateTime={item.createdAt}>{formatNotificationDate(item.createdAt)}</time></span></button>)}</div> : <div className="notification-empty"><Icon name="bell"/><strong>مفيش إشعارات جديدة</strong><small>أي أوردر جديد أو تعديل هيظهر هنا.</small></div>}</section>;
 }
 
-function Login({ loading, error, onLogin }: { loading: boolean; error: string; onLogin: (username: string, password: string) => void }) {
+function Login({ loading, error, onLogin }: { loading: boolean; error: string; onLogin: (username: string, password: string, remember: boolean) => void }) {
+  const [showPassword, setShowPassword] = useState(false);
   function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); const data = new FormData(event.currentTarget); onLogin(String(data.get("username")), String(data.get("password")));
+    event.preventDefault(); const data = new FormData(event.currentTarget); onLogin(String(data.get("username")), String(data.get("password")), data.get("remember") === "on");
   }
-  return <main className="login-page"><section className="login-card"><BrandLogo/><div><p className="eyebrow">منصة تشغيل الفروع</p><h1>أهلًا بيك</h1><p>سجّل دخولك لمتابعة الأوردرات الموزعة عليك.</p></div>{error && <div className="alert" role="alert">{error}</div>}<form onSubmit={submit}><label>اسم المستخدم<input name="username" autoComplete="username" required /></label><label>كلمة المرور<input name="password" type="password" autoComplete="current-password" required /></label><button className="primary" disabled={loading}>{loading ? "جاري الدخول…" : "تسجيل الدخول"}</button></form><small className="login-help">بيانات الدخول هي نفس حساب مستخدم الفرع في WordPress.</small></section></main>;
+  return <main className="login-page"><section className="login-card"><BrandLogo/><div className="login-intro"><p className="eyebrow">منصة تشغيل الفروع</p><h1>أهلًا بيك</h1><p>سجّل دخولك لمتابعة الأوردرات الموزعة عليك.</p></div>{error && <div className="alert" role="alert">{error}</div>}<form onSubmit={submit}><label>اسم المستخدم<input name="username" autoComplete="username" inputMode="text" required /></label><label>كلمة المرور<span className="password-field"><input name="password" type={showPassword ? "text" : "password"} autoComplete="current-password" required /><button type="button" className="password-toggle" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"} aria-pressed={showPassword}><Icon name={showPassword ? "eye-off" : "eye"} /></button></span></label><label className="remember-option"><input name="remember" type="checkbox" /><span>تذكرني على الجهاز ده</span></label><button className="primary" disabled={loading}>{loading ? "جاري الدخول…" : "تسجيل الدخول"}</button></form><small className="login-help">بيانات الدخول هي نفس حساب مستخدم الفرع في WordPress.</small></section></main>;
 }
 
 function Stat({ label, value, icon, tone }: { label: string; value: number; icon: string; tone: string }) {

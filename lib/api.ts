@@ -11,9 +11,7 @@ export class ApiError extends Error {
 
 export function getStoredToken() {
   if (typeof window === "undefined") return null;
-  const token = localStorage.getItem(tokenKey) || sessionStorage.getItem(tokenKey);
-  if (token && !localStorage.getItem(tokenKey)) localStorage.setItem(tokenKey, token);
-  return token;
+  return localStorage.getItem(tokenKey) || sessionStorage.getItem(tokenKey);
 }
 
 export function clearStoredToken() {
@@ -32,8 +30,10 @@ export function getStoredUser(): User | null {
   catch { localStorage.removeItem(userKey); sessionStorage.removeItem(userKey); return null; }
 }
 
-function storeUser(user: User) {
-  localStorage.setItem(userKey, JSON.stringify(user));
+function storeUser(user: User, persistent = Boolean(localStorage.getItem(tokenKey))) {
+  const storage = persistent ? localStorage : sessionStorage;
+  storage.setItem(userKey, JSON.stringify(user));
+  (persistent ? sessionStorage : localStorage).removeItem(userKey);
 }
 
 export function isAuthenticationError(cause: unknown) { return cause instanceof ApiError && cause.status === 401; }
@@ -50,10 +50,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const isDemoMode = !root;
-export async function login(username: string, password: string) {
+export async function login(username: string, password: string, remember: boolean) {
   const result = await request<{ token: string; user: User }>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
-  localStorage.setItem(tokenKey, result.token);
-  storeUser(result.user);
+  const storage = remember ? localStorage : sessionStorage;
+  storage.setItem(tokenKey, result.token);
+  (remember ? sessionStorage : localStorage).removeItem(tokenKey);
+  storeUser(result.user, remember);
   return result.user;
 }
 export const getMe = async () => {
