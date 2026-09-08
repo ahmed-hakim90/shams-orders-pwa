@@ -118,6 +118,20 @@ export function OrdersApp() {
   }, []);
 
   useEffect(() => {
+    if (!menuOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [menuOpen]);
+
+  useEffect(() => {
     if (!isDemoMode && user) setDashboardSnapshot({ user, orders, branches });
   }, [branches, orders, user]);
 
@@ -285,9 +299,12 @@ export function OrdersApp() {
   return (
     <div className="app-shell">
       <ServiceWorker />
-      <aside className={`sidebar ${menuOpen ? "is-open" : ""}`}>
-        <BrandLogo />
-        <button className="mobile-close" onClick={() => setMenuOpen(false)} aria-label="إغلاق القائمة"><Icon name="close" /></button>
+      <aside id="mobile-sidebar" className={`sidebar ${menuOpen ? "is-open" : ""}`} aria-label="القائمة الجانبية">
+        <div className="sidebar-header">
+          <BrandLogo />
+          <button className="mobile-close" onClick={() => setMenuOpen(false)} aria-label="إغلاق القائمة"><Icon name="close" /></button>
+        </div>
+        <p className="sidebar-mobile-label">التنقل الرئيسي</p>
         <nav aria-label="القائمة الرئيسية">
           <button className={`nav-item ${view === "overview" ? "is-active" : ""}`} aria-current={view === "overview" ? "page" : undefined} onClick={() => { setView("overview"); setMenuOpen(false); }}><Icon name="grid" /><span>نظرة عامة</span></button>
           <button className={`nav-item ${view === "orders" ? "is-active" : ""}`} aria-current={view === "orders" ? "page" : undefined} onClick={() => { setView("orders"); setMenuOpen(false); }}><Icon name="orders" /><span>الأوردرات</span><b>{counts.total}</b></button>
@@ -299,7 +316,7 @@ export function OrdersApp() {
 
       <main>
         <header className="topbar">
-          <button className="menu-button" onClick={() => setMenuOpen(true)} aria-label="فتح القائمة"><span/><span/><span/></button>
+          <button className="menu-button" onClick={() => setMenuOpen(true)} aria-label="فتح القائمة" aria-expanded={menuOpen} aria-controls="mobile-sidebar"><span/><span/><span/></button>
           <div><p>مساء الخير، {user.name.split(" ")[0]} 👋</p><small>تابع أوردراتك وحدّث حالتها بسهولة</small></div>
           <div className="top-actions"><span className={`connection ${isDemoMode ? "demo" : ""}`}>{isDemoMode ? "نسخة تجريبية" : "متصل بـWooCommerce"}</span><button className={`notification-button ${notificationOpen ? "is-open" : ""}`} onClick={toggleNotificationCenter} aria-label="فتح الإشعارات" aria-expanded={notificationOpen}><Icon name="bell" />{unreadNotifications > 0 && <b>{unreadNotifications > 9 ? "+9" : unreadNotifications.toLocaleString("ar-EG")}</b>}</button>{notificationsEnabled ? <span className="notification-label is-enabled">الصوت مفعّل</span> : <button className="notification-permission" onClick={enableNotifications}>تفعيل الصوت</button>}{notificationOpen && <NotificationCenter items={notificationItems} onOpen={openNotification} onClear={clearNotifications} />}</div>
         </header>
