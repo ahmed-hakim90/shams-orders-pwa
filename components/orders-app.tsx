@@ -10,6 +10,8 @@ import { BrandLogo } from "./brand-logo";
 import { ServiceWorker } from "./service-worker";
 import { clearDashboardSnapshot, getDashboardSnapshot, setDashboardSnapshot } from "@/lib/dashboard-cache";
 import { clearOrderSnapshots } from "@/lib/order-cache";
+import { formatStoreDateTime } from "@/lib/store-date";
+import { orderConfirmationWhatsAppUrl } from "@/lib/whatsapp";
 
 const statusOptions: { value: "all" | OrderStatus; label: string }[] = [
   { value: "all", label: "الكل" }, { value: "processing", label: "جاري التنفيذ" },
@@ -17,10 +19,14 @@ const statusOptions: { value: "all" | OrderStatus; label: string }[] = [
   { value: "cancelled", label: "ملغي" },
 ];
 type NotificationEvent = { id: string; orderId: number; orderNumber: string; title: string; message: string; createdAt: string };
+type ListPreferences = { query: string; status: "all" | OrderStatus; dateFrom: string; dateTo: string; branch: string; paymentMethod: string };
+const defaultListPreferences: ListPreferences = { query: "", status: "all", dateFrom: "", dateTo: "", branch: "", paymentMethod: "" };
+const ordersPerPage = 20;
 
 export function OrdersApp() {
   const router = useRouter();
   const [initialSnapshot] = useState(() => isDemoMode ? null : getDashboardSnapshot());
+  const [initialPreferences] = useState(readListPreferences);
   const [view, setView] = useState<"overview" | "orders" | "branches">("orders");
   const [user, setUser] = useState<User | null>(isDemoMode ? demoUser : initialSnapshot?.user || null);
   const [sessionReady, setSessionReady] = useState(isDemoMode || Boolean(initialSnapshot));
@@ -30,8 +36,22 @@ export function OrdersApp() {
   const [bulkBranchId, setBulkBranchId] = useState<number | "">("");
   const [bulkSaving, setBulkSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [status, setStatus] = useState<"all" | OrderStatus>("all");
-  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<"all" | OrderStatus>(initialPreferences.status);
+  const [query, setQuery] = useState(initialPreferences.query);
+  const [dateFrom, setDateFrom] = useState(initialPreferences.dateFrom);
+  const [dateTo, setDateTo] = useState(initialPreferences.dateTo);
+  const [branchFilter, setBranchFilter] = useState(initialPreferences.branch);
+  const [paymentFilter, setPaymentFilter] = useState(initialPreferences.paymentMethod);
+  const [filtersOpen, setFiltersOpen] = useState(Boolean(initialPreferences.dateFrom || initialPreferences.dateTo || initialPreferences.branch || initialPreferences.paymentMethod));
+  const [page, setPage] = useState(1);
+  const [totalOrders, setTotalOrders] = useState(isDemoMode ? demoOrders.length : initialSnapshot?.orders.length || 0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const paymentMethods = useMemo(() => {
+    const discovered = paymentMethodEntries(orders);
+    if (!paymentFilter || discovered.some(([value]) => value === paymentFilter)) return discovered;
+    return [[paymentFilter, paymentFilter] as [string, string], ...discovered];
+  }, [orders, paymentFilter]);
   const [loading, setLoading] = useState(!isDemoMode && !initialSnapshot);
   const [error, setError] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -41,6 +61,7 @@ export function OrdersApp() {
   const [unreadNotifications, setUnreadNotifications] = useState(0);
   const [toast, setToast] = useState<NotificationEvent | null>(null);
   const knownOrders = useRef<Map<number, Order>>(new Map((isDemoMode ? demoOrders : initialSnapshot?.orders || []).map((order) => [order.id, order])));
+  const filtersMounted = useRef(false);
 
   useEffect(() => {
     if (isDemoMode) return;
@@ -56,16 +77,41 @@ export function OrdersApp() {
     }
     getMe()
       .then(async (nextUser) => {
-        const [nextOrders, nextBranches] = await Promise.all([getOrders(), nextUser.role === "admin" ? getBranches() : Promise.resolve([])]);
-        knownOrders.current = new Map(nextOrders.map((order) => [order.id, order]));
-        setUser(nextUser); setOrders(nextOrders); setBranches(nextBranches);
+        const [ordersPage, nextBranches] = await Promise.all([getOrders({ ...toOrderQuery(initialPreferences), perPage: ordersPerPage }), nextUser.role === "admin" ? getBranches() : Promise.resolve([])]);
+        knownOrders.current = new Map(ordersPage.orders.map((order) => [order.id, order]));
+        setUser(nextUser); setOrders(ordersPage.orders); setBranches(nextBranches); setTotalOrders(ordersPage.total); setTotalPages(ordersPage.totalPages);
       })
       .catch((cause) => {
         if (isAuthenticationError(cause)) { clearStoredToken(); clearDashboardSnapshot(); clearOrderSnapshots(); setUser(null); }
         else setError(cause instanceof Error ? cause.message : "تعذر تحميل البيانات");
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [initialPreferences]);
+
+  useEffect(() => {
+    const preferences = { query, status, dateFrom, dateTo, branch: branchFilter, paymentMethod: paymentFilter };
+    sessionStorage.setItem("shams_orders_list_preferences", JSON.stringify(preferences));
+    if (!user || isDemoMode) return;
+    if (!filtersMounted.current) { filtersMounted.current = true; return; }
+    const timer = window.setTimeout(async () => {
+      setLoading(true); setError("");
+      try {
+        const result = await getOrders({ ...toOrderQuery(preferences), perPage: ordersPerPage });
+        knownOrders.current = new Map(result.orders.map((order) => [order.id, order]));
+        setOrders(result.orders); setPage(1); setTotalOrders(result.total); setTotalPages(result.totalPages); setSelectedIds(new Set());
+      } catch (cause) {
+        if (isAuthenticationError(cause)) { clearStoredToken(); clearDashboardSnapshot(); clearOrderSnapshots(); setUser(null); }
+        else setError(cause instanceof Error ? cause.message : "تعذر تطبيق الفلاتر");
+      } finally { setLoading(false); }
+    }, query ? 350 : 0);
+    return () => window.clearTimeout(timer);
+  }, [branchFilter, dateFrom, dateTo, paymentFilter, query, status, user]);
+
+  useEffect(() => {
+    if (loading || typeof window === "undefined") return;
+    const savedPosition = Number(sessionStorage.getItem("shams_orders_list_scroll") || 0);
+    if (savedPosition > 0) requestAnimationFrame(() => window.scrollTo({ top: savedPosition }));
+  }, [loading]);
 
   useEffect(() => {
     queueMicrotask(() => setNotificationsEnabled("Notification" in window && Notification.permission === "granted" && localStorage.getItem("shams_orders_notifications") === "on"));
@@ -88,10 +134,10 @@ export function OrdersApp() {
     if (!user || isDemoMode) return;
     const poll = async () => {
       try {
-        const nextOrders = await getOrders();
-        const events = detectOrderEvents(knownOrders.current, nextOrders, user);
-        knownOrders.current = new Map(nextOrders.map((order) => [order.id, order]));
-        setOrders(nextOrders);
+        const result = await getOrders({ ...currentOrderQuery(query, status, dateFrom, dateTo, branchFilter, paymentFilter), perPage: ordersPerPage });
+        const events = detectOrderEvents(knownOrders.current, result.orders, user);
+        knownOrders.current = new Map(result.orders.map((order) => [order.id, order]));
+        setOrders(result.orders); setPage(1); setTotalOrders(result.total); setTotalPages(result.totalPages);
         publishEvents(events);
       } catch { /* Keep the last known list during a temporary network failure. */ }
     };
@@ -99,7 +145,7 @@ export function OrdersApp() {
     return () => window.clearInterval(timer);
     // publishEvents intentionally shares this polling lifecycle's current user and permission state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [notificationsEnabled, user]);
+  }, [branchFilter, dateFrom, dateTo, notificationsEnabled, paymentFilter, query, status, user]);
 
   function publishEvents(events: NotificationEvent[]) {
     if (!events.length || !user) return;
@@ -131,18 +177,26 @@ export function OrdersApp() {
     setNotificationItems([]); setUnreadNotifications(0); setNotificationOpen(false);
   }
 
-  const filtered = useMemo(() => orders.filter((order) => {
+  const filtered = useMemo(() => isDemoMode ? orders.filter((order) => {
     const matchesStatus = status === "all" || order.status === status;
-    const needle = query.trim().toLocaleLowerCase("ar");
-    return matchesStatus && (!needle || `${order.number} ${order.customer} ${order.phone}`.toLocaleLowerCase("ar").includes(needle));
-  }), [orders, query, status]);
+    const matchesDateFrom = !dateFrom || order.created_at.slice(0, 10) >= dateFrom;
+    const matchesDateTo = !dateTo || order.created_at.slice(0, 10) <= dateTo;
+    const matchesBranch = !branchFilter || (branchFilter === "unassigned" ? !order.branch : String(order.branch?.id) === branchFilter);
+    const matchesPayment = !paymentFilter || order.payment_method_id === paymentFilter || normalizeSearch(order.payment_method) === normalizeSearch(paymentFilter);
+    const needle = normalizeSearch(query);
+    const searchable = normalizeSearch([
+      order.number, order.customer, order.phone, order.email,
+      order.branch?.name, order.payment_method, order.address,
+    ].filter(Boolean).join(" "));
+    return matchesStatus && matchesDateFrom && matchesDateTo && matchesBranch && matchesPayment && (!needle || searchable.includes(needle));
+  }) : orders, [branchFilter, dateFrom, dateTo, orders, paymentFilter, query, status]);
 
   const counts = useMemo(() => ({
-    total: orders.length,
+    total: isDemoMode ? orders.length : totalOrders,
     unassigned: orders.filter((order) => !order.branch).length,
     active: orders.filter((order) => ["processing", "on-hold"].includes(order.status)).length,
     completed: orders.filter((order) => order.status === "completed").length,
-  }), [orders]);
+  }), [orders, totalOrders]);
 
   const branchSummaries = useMemo(() => branches.map((branch) => {
     const assigned = orders.filter((order) => order.branch?.id === branch.id);
@@ -158,9 +212,9 @@ export function OrdersApp() {
     setLoading(true); setError("");
     try {
       const nextUser = await login(username, password, remember);
-      const [nextOrders, nextBranches] = await Promise.all([getOrders(), nextUser.role === "admin" ? getBranches() : Promise.resolve([])]);
-      knownOrders.current = new Map(nextOrders.map((order) => [order.id, order]));
-      setUser(nextUser); setOrders(nextOrders); setBranches(nextBranches);
+      const [ordersPage, nextBranches] = await Promise.all([getOrders({ ...currentOrderQuery(query, status, dateFrom, dateTo, branchFilter, paymentFilter), perPage: ordersPerPage }), nextUser.role === "admin" ? getBranches() : Promise.resolve([])]);
+      knownOrders.current = new Map(ordersPage.orders.map((order) => [order.id, order]));
+      setUser(nextUser); setOrders(ordersPage.orders); setBranches(nextBranches); setTotalOrders(ordersPage.total); setTotalPages(ordersPage.totalPages);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "تعذر تسجيل الدخول"); }
     finally { setLoading(false); }
   }
@@ -171,15 +225,33 @@ export function OrdersApp() {
     if (isDemoMode || refreshing) return;
     setRefreshing(true); setError("");
     try {
-      const [nextOrders, nextBranches] = await Promise.all([getOrders(), user?.role === "admin" ? getBranches() : Promise.resolve([])]);
-      const events = user ? detectOrderEvents(knownOrders.current, nextOrders, user) : [];
-      knownOrders.current = new Map(nextOrders.map((order) => [order.id, order]));
-      setOrders(nextOrders); setBranches(nextBranches);
+      const [ordersPage, nextBranches] = await Promise.all([getOrders({ ...currentOrderQuery(query, status, dateFrom, dateTo, branchFilter, paymentFilter), perPage: ordersPerPage }), user?.role === "admin" ? getBranches() : Promise.resolve([])]);
+      const events = user ? detectOrderEvents(knownOrders.current, ordersPage.orders, user) : [];
+      knownOrders.current = new Map(ordersPage.orders.map((order) => [order.id, order]));
+      setOrders(ordersPage.orders); setBranches(nextBranches); setPage(1); setTotalOrders(ordersPage.total); setTotalPages(ordersPage.totalPages);
       publishEvents(events);
     } catch (cause) {
       if (isAuthenticationError(cause)) { clearStoredToken(); clearDashboardSnapshot(); clearOrderSnapshots(); setUser(null); }
       else setError(cause instanceof Error ? cause.message : "تعذر تحديث البيانات");
     } finally { setRefreshing(false); }
+  }
+
+  async function loadMoreOrders() {
+    if (isDemoMode || loadingMore || page >= totalPages) return;
+    setLoadingMore(true); setError("");
+    try {
+      const nextPage = page + 1;
+      const result = await getOrders({ ...currentOrderQuery(query, status, dateFrom, dateTo, branchFilter, paymentFilter), page: nextPage, perPage: ordersPerPage });
+      setOrders((current) => Array.from(new Map([...current, ...result.orders].map((order) => [order.id, order])).values()));
+      result.orders.forEach((order) => knownOrders.current.set(order.id, order));
+      setPage(nextPage); setTotalOrders(result.total); setTotalPages(result.totalPages);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "تعذر تحميل أوردرات إضافية"); }
+    finally { setLoadingMore(false); }
+  }
+
+  function openOrder(order: Order) {
+    sessionStorage.setItem("shams_orders_list_scroll", String(window.scrollY));
+    router.push(`/orders/${order.id}`);
   }
 
   async function enableNotifications() {
@@ -250,11 +322,14 @@ export function OrdersApp() {
 
           {view === "orders" && <section className="orders-panel">
             <div className="toolbar">
+              <label className="search"><Icon name="search" /><span className="sr-only">البحث في الأوردرات</span><input type="search" inputMode="search" enterKeyHint="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ابحث بالاسم، رقم الأوردر أو الموبايل" aria-describedby="search-results-count" />{query && <button type="button" onClick={() => setQuery("")} aria-label="مسح البحث"><Icon name="close" /></button>}</label>
               <div className="filters" role="tablist" aria-label="فلترة حسب الحالة">{statusOptions.map((option) => <button key={option.value} role="tab" aria-selected={status === option.value} onClick={() => setStatus(option.value)}>{option.label}</button>)}</div>
-              <label className="search"><Icon name="search" /><span className="sr-only">ابحث</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="رقم الأوردر، العميل أو الهاتف" /></label>
+              <button className={`advanced-filter-toggle ${filtersOpen ? "is-open" : ""}`} onClick={() => setFiltersOpen((current) => !current)} aria-expanded={filtersOpen} aria-controls="advanced-order-filters"><Icon name="filter" />فلاتر{activeAdvancedFilterCount(dateFrom, dateTo, branchFilter, paymentFilter) > 0 && <b>{activeAdvancedFilterCount(dateFrom, dateTo, branchFilter, paymentFilter).toLocaleString("ar-EG")}</b>}</button>
             </div>
+            {filtersOpen && <div className="advanced-filters" id="advanced-order-filters"><label>من تاريخ<input type="date" value={dateFrom} max={dateTo || undefined} onChange={(event) => setDateFrom(event.target.value)} /></label><label>إلى تاريخ<input type="date" value={dateTo} min={dateFrom || undefined} onChange={(event) => setDateTo(event.target.value)} /></label>{user.role === "admin" && <label>الفرع<select value={branchFilter} onChange={(event) => setBranchFilter(event.target.value)}><option value="">كل الفروع</option><option value="unassigned">بدون فرع</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>}<label>طريقة الدفع<select value={paymentFilter} onChange={(event) => setPaymentFilter(event.target.value)}><option value="">كل طرق الدفع</option>{paymentMethods.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><button className="clear-filters" disabled={!dateFrom && !dateTo && !branchFilter && !paymentFilter} onClick={() => { setDateFrom(""); setDateTo(""); setBranchFilter(""); setPaymentFilter(""); }}>مسح الفلاتر</button></div>}
+            <div className="results-summary" id="search-results-count" aria-live="polite"><strong>{(isDemoMode ? filtered.length : totalOrders).toLocaleString("ar-EG")}</strong> أوردر مطابق{query && <span>للبحث عن «{query.trim()}»</span>}</div>
             {user.role === "admin" && selectedIds.size > 0 && <div className="bulk-bar" role="region" aria-label="توزيع الأوردرات المحددة"><strong>تم اختيار {selectedIds.size.toLocaleString("ar-EG")} أوردر</strong><label><span className="sr-only">اختار الفرع</span><select value={bulkBranchId} onChange={(event) => setBulkBranchId(event.target.value ? Number(event.target.value) : "")}><option value="">اختار الفرع</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label><button className="primary" disabled={!bulkBranchId || bulkSaving} onClick={handleBulkAssign}>{bulkSaving ? "جاري التوزيع…" : "توزيع الأوردرات"}</button><button className="clear-selection" onClick={() => setSelectedIds(new Set())}>إلغاء التحديد</button></div>}
-            {loading ? <div className="state-box"><span className="loader"/>جاري تحميل الأوردرات…</div> : filtered.length === 0 ? <div className="state-box"><Icon name="search"/><strong>مفيش أوردرات مطابقة</strong><small>جرّب تغير الفلتر أو كلمة البحث.</small></div> : <OrderList orders={filtered} isAdmin={user.role === "admin"} selectedIds={selectedIds} onSelect={(order) => router.push(`/orders/${order.id}`)} onToggle={(id) => setSelectedIds((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onToggleAll={() => setSelectedIds((current) => filtered.every((order) => current.has(order.id)) ? new Set() : new Set(filtered.map((order) => order.id)))} />}
+            {loading ? <div className="state-box"><span className="loader"/>جاري تحميل الأوردرات…</div> : filtered.length === 0 ? <div className="state-box"><Icon name="search"/><strong>مفيش أوردرات مطابقة</strong><small>راجع الاسم أو رقم الأوردر، أو غيّر الفلاتر.</small>{(query || activeAdvancedFilterCount(dateFrom, dateTo, branchFilter, paymentFilter) > 0) && <button className="secondary" onClick={() => { setQuery(""); setDateFrom(""); setDateTo(""); setBranchFilter(""); setPaymentFilter(""); setStatus("all"); }}>مسح البحث والفلاتر</button>}</div> : <><OrderList orders={filtered} isAdmin={user.role === "admin"} selectedIds={selectedIds} onSelect={openOrder} onToggle={(id) => setSelectedIds((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onToggleAll={() => setSelectedIds((current) => filtered.every((order) => current.has(order.id)) ? new Set() : new Set(filtered.map((order) => order.id)))} />{!isDemoMode && page < totalPages && <div className="load-more"><span>تم عرض {orders.length.toLocaleString("ar-EG")} من {totalOrders.toLocaleString("ar-EG")}</span><button className="secondary" disabled={loadingMore} onClick={loadMoreOrders}>{loadingMore ? "جاري التحميل…" : "تحميل أوردرات إضافية"}</button></div>}</>}
           </section>}
         </div>
       </main>
@@ -289,13 +364,47 @@ function BranchesPage({ branches }: { branches: Array<Branch & { total: number; 
 
 function OrderList({ orders, isAdmin, selectedIds, onSelect, onToggle, onToggleAll }: { orders: Order[]; isAdmin: boolean; selectedIds: Set<number>; onSelect: (order: Order) => void; onToggle: (id: number) => void; onToggleAll: () => void }) {
   const allSelected = orders.length > 0 && orders.every((order) => selectedIds.has(order.id));
-  return <div className={`order-list ${isAdmin ? "has-selection" : ""}`}><div className="table-head">{isAdmin && <label className="select-order"><input type="checkbox" checked={allSelected} onChange={onToggleAll}/><span className="sr-only">تحديد كل الأوردرات الظاهرة</span></label>}<span>الأوردر</span><span>العميل</span><span>الدفع</span><span>الفرع</span><span>الحالة</span><span>الإجمالي</span><span /></div>{orders.map((order) => <div className={`order-row-shell ${selectedIds.has(order.id) ? "is-selected" : ""}`} key={order.id}>{isAdmin && <label className="select-order"><input type="checkbox" checked={selectedIds.has(order.id)} onChange={() => onToggle(order.id)}/><span className="sr-only">تحديد الأوردر رقم {order.number}</span></label>}<button className="order-row" onClick={() => onSelect(order)}><span className="order-id"><b>#{order.number}</b><small>{formatDate(order.created_at)}</small></span><span className="customer"><b>{order.customer}</b><small dir="ltr">{order.phone}</small></span><span><b>{order.payment_method || "—"}</b><small className={order.paid ? "paid" : "unpaid"}>{order.paid ? "مدفوع" : "غير مدفوع"}</small></span><span className={order.branch ? "" : "muted"}>{order.branch?.name || "لم يتم التوزيع"}</span><span><Status status={order.status} label={order.status_label} /></span><span className="total">{stripHtml(order.total)}</span><span className="row-arrow"><Icon name="chevron" /></span></button></div>)}</div>;
+  return <div className={`order-list ${isAdmin ? "has-selection" : ""}`}><div className="table-head">{isAdmin && <label className="select-order"><input type="checkbox" checked={allSelected} onChange={onToggleAll}/><span className="sr-only">تحديد كل الأوردرات الظاهرة</span></label>}<span>الأوردر</span><span>العميل</span><span>الدفع</span><span>الفرع</span><span>الحالة</span><span>الإجمالي</span><span /></div>{orders.map((order) => <div className={`order-row-shell ${selectedIds.has(order.id) ? "is-selected" : ""}`} key={order.id}>{isAdmin && <label className="select-order"><input type="checkbox" checked={selectedIds.has(order.id)} onChange={() => onToggle(order.id)}/><span className="sr-only">تحديد الأوردر رقم {order.number}</span></label>}<button className="order-row" onClick={() => onSelect(order)} aria-label={`فتح الأوردر رقم ${order.number} للعميل ${order.customer}`}><span className="order-id"><b>#{order.number}</b><small>{formatDate(order.created_at)}</small></span><span className="customer"><b>{order.customer}</b><small dir="ltr">{order.phone || "بدون رقم هاتف"}</small></span><span className="payment"><b>{order.payment_method || "—"}</b><small className={order.paid ? "paid" : "unpaid"}>{order.paid ? "مدفوع" : "غير مدفوع"}</small></span><span className={`branch ${order.branch ? "" : "muted"}`}>{order.branch?.name || "لم يتم التوزيع"}</span><span className="order-status"><Status status={order.status} label={order.status_label} /></span><span className="total">{stripHtml(order.total)}</span><span className="row-arrow"><Icon name="chevron" /></span></button><div className="mobile-order-actions">{order.phone && <a href={`tel:${phoneDigits(order.phone)}`} title="اتصال" aria-label={`الاتصال بالعميل ${order.customer}`}><Icon name="phone" /><span>اتصال</span></a>}{order.phone && <a href={orderConfirmationWhatsAppUrl(order)} target="_blank" rel="noreferrer" title="تأكيد عبر واتساب" aria-label={`إرسال رسالة تأكيد الأوردر للعميل ${order.customer}`}><Icon name="whatsapp"/><span>واتساب</span></a>}<button title="فتح التفاصيل" aria-label={`فتح تفاصيل الأوردر رقم ${order.number}`} onClick={() => onSelect(order)}><Icon name="eye"/><span>التفاصيل</span></button></div></div>)}</div>;
 }
 
 function Status({ status, label }: { status: OrderStatus; label: string }) { return <span className={`status status-${status}`}><i />{label}</span>; }
 
 function stripHtml(value: string) { return value.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " "); }
-function formatDate(value: string) { return new Intl.DateTimeFormat("ar-EG", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(new Date(value)); }
+function normalizeSearch(value: string) {
+  const easternArabicDigits = "٠١٢٣٤٥٦٧٨٩";
+  const persianDigits = "۰۱۲۳۴۵۶۷۸۹";
+  return value
+    .toLocaleLowerCase("ar")
+    .replace(/[٠-٩]/g, (digit) => String(easternArabicDigits.indexOf(digit)))
+    .replace(/[۰-۹]/g, (digit) => String(persianDigits.indexOf(digit)))
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+function readListPreferences(): ListPreferences {
+  if (typeof window === "undefined") return defaultListPreferences;
+  try { return { ...defaultListPreferences, ...JSON.parse(sessionStorage.getItem("shams_orders_list_preferences") || "{}") }; }
+  catch { return defaultListPreferences; }
+}
+function toOrderQuery(preferences: ListPreferences) {
+  return { status: preferences.status, search: preferences.query, dateFrom: preferences.dateFrom, dateTo: preferences.dateTo, branch: preferences.branch, paymentMethod: preferences.paymentMethod };
+}
+function currentOrderQuery(query: string, status: "all" | OrderStatus, dateFrom: string, dateTo: string, branch: string, paymentMethod: string) {
+  return toOrderQuery({ query, status, dateFrom, dateTo, branch, paymentMethod });
+}
+function activeAdvancedFilterCount(dateFrom: string, dateTo: string, branch: string, paymentMethod: string) { return [dateFrom || dateTo, branch, paymentMethod].filter(Boolean).length; }
+function paymentMethodEntries(orders: Order[]): Array<[string, string]> {
+  return Array.from(new Map(
+    orders
+      .filter((order) => order.payment_method)
+      .map((order) => [order.payment_method_id || order.payment_method, order.payment_method] as [string, string]),
+  ).entries());
+}
+function phoneDigits(phone: string) { return phone.replace(/\D/g, ""); }
+function formatDate(value: string) { return formatStoreDateTime(value, "short"); }
 function formatNotificationDate(value: string) { return new Intl.DateTimeFormat("ar-EG", { hour: "numeric", minute: "2-digit", day: "numeric", month: "short" }).format(new Date(value)); }
 function notificationStorageKey(userId: number) { return `shams_orders_notification_feed_${userId}`; }
 function orderSignature(order: Order) { return order.modified_at || [order.status, order.paid, order.total, order.branch?.id || 0, order.customer, order.phone].join("|"); }

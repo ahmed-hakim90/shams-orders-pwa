@@ -17,6 +17,7 @@ export interface Order {
   total: string;
   currency: string;
   payment_method: string;
+  payment_method_id?: string;
   paid: boolean;
   customer: string;
   phone: string;
@@ -34,4 +35,22 @@ export interface Order {
   totals?: OrderTotal[];
   store?: StoreDetails;
   activity?: OrderActivity[];
+}
+
+export interface OrdersPage {
+  orders: Order[];
+  page: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface OrderQuery {
+  page?: number;
+  perPage?: number;
+  status?: "all" | OrderStatus;
+  search?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  branch?: string;
+  paymentMethod?: string;
 }

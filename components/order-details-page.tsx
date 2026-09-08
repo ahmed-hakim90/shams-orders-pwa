@@ -9,8 +9,10 @@ import type { Branch, Order, OrderItem, OrderStatus, User } from "@/lib/types";
 import { Icon } from "./icons";
 import { BrandLogo } from "./brand-logo";
 import { ServiceWorker } from "./service-worker";
+import { formatStoreDateTime } from "@/lib/store-date";
 import { getDashboardSnapshot } from "@/lib/dashboard-cache";
 import { getOrderSnapshot, setOrderSnapshot } from "@/lib/order-cache";
+import { orderConfirmationWhatsAppUrl } from "@/lib/whatsapp";
 
 const statuses: { value: OrderStatus; label: string; description: string }[] = [
   { value: "on-hold", label: "قيد الانتظار", description: "محتاج تأكيد أو إجراء قبل التجهيز" },
@@ -108,7 +110,7 @@ export function OrderDetailsPage({ orderId }: { orderId: number }) {
 
       <main className="order-content">
         <section className="order-titlebar">
-          <div><p>أوردر #{order.number}</p><h1>تفاصيل الأوردر</h1><small>{formatFullDate(order.created_at)}</small></div>
+          <div><p>أوردر #{order.number}</p><h1>تفاصيل الأوردر</h1><time className="localized-time" dateTime={order.created_at}>{formatFullDate(order.created_at)}</time></div>
           <div className="title-actions"><Status status={order.status} label={order.status_label}/><a className="secondary" href={`/orders/${order.id}/print`}><Icon name="print"/>طباعة الفاتورة</a></div>
         </section>
 
@@ -142,7 +144,7 @@ export function OrderDetailsPage({ orderId }: { orderId: number }) {
             <section className="detail-card customer-card">
               <header><div><span className="section-icon green"><Icon name="phone"/></span><div><h2>بيانات العميل</h2><p>معلومات التواصل</p></div></div></header>
               <dl><div><dt>الاسم</dt><dd>{order.customer}</dd></div><div><dt>رقم الهاتف</dt><dd dir="ltr">{order.phone}</dd></div>{order.email && <div><dt>البريد الإلكتروني</dt><dd dir="ltr">{order.email}</dd></div>}</dl>
-              <a className="primary call-button" href={`tel:${order.phone}`}><Icon name="phone"/>اتصال بالعميل</a>
+              <div className="customer-actions"><a className="primary call-button" href={`tel:${order.phone}`}><Icon name="phone"/>اتصال بالعميل</a>{order.phone && <a className="whatsapp-button" href={orderConfirmationWhatsAppUrl(order)} target="_blank" rel="noreferrer" aria-label={`إرسال رسالة تأكيد الأوردر للعميل ${order.customer}`}><Icon name="whatsapp"/>WhatsApp — تأكيد الأوردر</a>}</div>
             </section>
 
             <section className="detail-card payment-card">
@@ -155,7 +157,7 @@ export function OrderDetailsPage({ orderId }: { orderId: number }) {
           <section className="detail-card activity-card">
             <header><div><span className="section-icon blue"><Icon name="bell"/></span><div><h2>سجل المتابعة</h2><p>كل إجراء باسم المستخدم ووقت تنفيذه</p></div></div></header>
             <form className="follow-up-form" onSubmit={submitFollowUp}><label htmlFor="follow-up-note">إضافة متابعة جديدة</label><textarea id="follow-up-note" name="note" maxLength={500} placeholder="مثال: تم التواصل مع العميل وتأكيد ميعاد الاستلام" disabled={saving}/><button className="primary" disabled={saving}>{saving ? "جاري الحفظ…" : "تسجيل المتابعة"}</button></form>
-            <div className="activity-list">{order.activity?.length ? order.activity.map((item) => <article key={item.id}><span/><div><p>{item.content}</p><time dateTime={item.created_at}>{formatActivityDate(item.created_at)}</time></div></article>) : <div className="empty-inline">لسه مفيش إجراءات مسجلة على الأوردر.</div>}</div>
+            <div className="activity-list">{order.activity?.length ? order.activity.map((item) => <article key={item.id}><span/><div><p>{item.content}</p><time className="localized-time" dateTime={item.created_at}>{formatActivityDate(item.created_at)}</time></div></article>) : <div className="empty-inline">لسه مفيش إجراءات مسجلة على الأوردر.</div>}</div>
           </section>
         </div>
       </main>
@@ -174,6 +176,6 @@ function passthroughImageLoader({ src }: ImageLoaderProps) { return src; }
 function Info({ label, value, multiline = false }: { label: string; value: string; multiline?: boolean }) { return <div className="info-block"><span>{label}</span><strong className={multiline ? "multiline-value" : undefined}>{value}</strong></div>; }
 function Status({ status, label }: { status: OrderStatus; label: string }) { return <span className={`status status-${status}`}><i />{label}</span>; }
 function stripHtml(value: string) { return value.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " "); }
-function formatFullDate(value: string) { return new Intl.DateTimeFormat("ar-EG", { dateStyle: "full", timeStyle: "short" }).format(new Date(value)); }
-function formatActivityDate(value: string) { return new Intl.DateTimeFormat("ar-EG", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
+function formatFullDate(value: string) { return formatStoreDateTime(value, "full"); }
+function formatActivityDate(value: string) { return formatStoreDateTime(value, "medium"); }
 function withDemoActivity(order: Order, content: string): Order { return { ...order, activity: [{ id: Date.now(), content, created_at: new Date().toISOString() }, ...(order.activity || [])] }; }
