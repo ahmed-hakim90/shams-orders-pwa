@@ -14,6 +14,7 @@ export interface Order {
   modified_at?: string;
   status: OrderStatus;
   status_label: string;
+  allowed_statuses?: OrderStatus[];
   total: string;
   currency: string;
   payment_method: string;

@@ -13,13 +13,7 @@ import { formatStoreDateTime } from "@/lib/store-date";
 import { getDashboardSnapshot } from "@/lib/dashboard-cache";
 import { getOrderSnapshot, setOrderSnapshot } from "@/lib/order-cache";
 import { orderConfirmationWhatsAppUrl } from "@/lib/whatsapp";
-
-const statuses: { value: OrderStatus; label: string; description: string }[] = [
-  { value: "on-hold", label: "قيد الانتظار", description: "محتاج تأكيد أو إجراء قبل التجهيز" },
-  { value: "processing", label: "جاري التجهيز", description: "الفرع استلم الأوردر وبدأ تحضيره" },
-  { value: "completed", label: "تم التسليم", description: "العميل استلم والأوردر اتقفل" },
-  { value: "cancelled", label: "ملغي", description: "تم إيقاف تنفيذ الأوردر" },
-];
+import { allowedStatusTransitions, operationalStatuses, statusLabel } from "@/lib/order-workflow";
 
 export function OrderDetailsPage({ orderId }: { orderId: number }) {
   const router = useRouter();
@@ -72,8 +66,8 @@ export function OrderDetailsPage({ orderId }: { orderId: number }) {
     if (!order) return;
     setSaving(true); setError(""); setMessage("");
     try {
-      const label = statuses.find((item) => item.value === status)?.label || status;
-      const updated = isDemoMode ? withDemoActivity({ ...order, status, status_label: label }, `تم تغيير الحالة إلى «${label}» بواسطة ${user?.name}.`) : await updateOrderStatus(order.id, status);
+      const label = statusLabel(status);
+      const updated = isDemoMode ? withDemoActivity({ ...order, status, status_label: label, allowed_statuses: undefined }, `تم تغيير الحالة إلى «${label}» بواسطة ${user?.name}.`) : await updateOrderStatus(order.id, status);
       setOrder(updated); setOrderSnapshot(updated); setMessage("تم تحديث حالة الأوردر");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "تعذر تحديث الحالة"); }
     finally { setSaving(false); }
@@ -98,6 +92,7 @@ export function OrderDetailsPage({ orderId }: { orderId: number }) {
 
   const shippingAddress = order.shipping_address_lines?.filter(Boolean).join("\n") || order.shipping_address || order.address || "غير مسجل";
   const orderTotals = order.totals?.filter((line) => !line.label.toLocaleLowerCase().includes("payment method")) || [];
+  const allowedStatuses = allowedStatusTransitions(order);
 
   return (
     <div className="order-page-shell">
@@ -136,8 +131,9 @@ export function OrderDetailsPage({ orderId }: { orderId: number }) {
             <section className="detail-card operations-card">
               <header><div><span className="section-icon orange"><Icon name="grid"/></span><div><h2>تشغيل الأوردر</h2><p>التوزيع والحالة الحالية</p></div></div></header>
               {user.role === "admin" && <div className="distribution-box"><div><strong>{order.branch ? "إعادة توزيع الأوردر" : "الأوردر محتاج يتوزع"}</strong><p>{order.branch ? `موزع حاليًا على ${order.branch.name}` : "اختار الفرع المسؤول ثم اضغط زر التوزيع."}</p></div><label htmlFor="branch-select">الفرع المسؤول</label><select id="branch-select" value={selectedBranchId} disabled={saving} onChange={(event) => setSelectedBranchId(event.target.value ? Number(event.target.value) : "")}><option value="">اختار الفرع</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select><button type="button" className="primary distribute-button" disabled={saving || !selectedBranchId || selectedBranchId === order.branch?.id} onClick={changeBranch}>{saving ? "جاري التوزيع…" : order.branch ? "تأكيد إعادة التوزيع" : "توزيع الأوردر"}</button></div>}
-              <fieldset className="status-picker" disabled={saving || !order.branch}><legend>اختار حالة الأوردر</legend>{statuses.map((status) => <button type="button" key={status.value} className={order.status === status.value ? "is-selected" : ""} aria-pressed={order.status === status.value} onClick={() => changeStatus(status.value)}><span><i/>{status.label}</span><small>{status.description}</small></button>)}</fieldset>
+              <fieldset className="status-picker" disabled={saving || !order.branch}><legend>اختار حالة الأوردر</legend>{operationalStatuses.map((status) => { const unavailable = order.status !== status.value && !allowedStatuses.includes(status.value); return <button type="button" key={status.value} className={order.status === status.value ? "is-selected" : ""} aria-pressed={order.status === status.value} disabled={saving || unavailable || order.status === status.value} title={unavailable ? "الانتقال للحالة دي غير متاح من الحالة الحالية" : undefined} onClick={() => changeStatus(status.value)}><span><i/>{status.label}</span><small>{order.status === status.value ? "الحالة الحالية" : unavailable ? "غير متاح حاليًا" : status.description}</small></button>; })}</fieldset>
               {!order.branch && <p className="field-notice">لازم توزّع الأوردر على فرع قبل تحديث حالته.</p>}
+              {order.branch && allowedStatuses.length === 0 && <p className="field-notice is-terminal">الأوردر في حالة نهائية. لو محتاج تعدّلها راجع مدير النظام.</p>}
               <div className="assignment"><span>الفرع الحالي</span><strong>{order.branch?.name || "بدون فرع"}</strong></div>
             </section>
 

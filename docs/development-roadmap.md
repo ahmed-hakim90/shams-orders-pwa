@@ -17,6 +17,8 @@ Acceptance: staff can reach any order quickly without losing their working conte
 
 ## Batch 2 — Order workflow
 
+Status: implemented locally on 8 September 2026; pending plugin packaging, preview deployment, and owner review.
+
 - Finalize operational statuses and transitions.
 - Add quick status changes and follow-ups from the list.
 - Record the actor and timestamp for every action.
