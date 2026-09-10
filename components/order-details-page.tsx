@@ -119,7 +119,7 @@ export function OrderDetailsPage({ orderId }: { orderId: number }) {
       <main className="order-content">
         <section className="order-titlebar">
           <div><p>أوردر #{order.number}</p><h1>تفاصيل الأوردر</h1><time className="localized-time" dateTime={order.created_at}>{formatFullDate(order.created_at)}</time></div>
-          <div className="title-actions"><Status status={order.status} label={order.status_label}/><a className="secondary" href={`/orders/${order.id}/print`}><Icon name="print"/>طباعة الفاتورة</a></div>
+          <div className="title-actions"><Status status={order.status} label={statusLabel(order.status)}/><a className="secondary" href={`/orders/${order.id}/print`}><Icon name="print"/>طباعة الفاتورة</a></div>
         </section>
 
         {error && <div className="alert" role="alert">{error}</div>}

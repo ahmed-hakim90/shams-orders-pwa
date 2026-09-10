@@ -1,5 +1,5 @@
 export type Role = "admin" | "branch";
-export type OrderStatus = "processing" | "on-hold" | "completed" | "cancelled";
+export type OrderStatus = "pending" | "processing" | "on-hold" | "completed" | "cancelled" | "refunded" | "failed" | "checkout-draft";
 
 export interface User { id: number; name: string; role: Role }
 export interface Branch { id: number; name: string }
@@ -54,4 +54,46 @@ export interface OrderQuery {
   dateTo?: string;
   branch?: string;
   paymentMethod?: string;
+}
+
+export type ReconciliationStatus = "matched" | "needs_create" | "needs_review" | "website_only" | "sku_issue";
+
+export interface ReconciliationSummary {
+  local_total: number;
+  website_total: number;
+  matched: number;
+  needs_create: number;
+  needs_review: number;
+  website_only: number;
+  sku_issues: number;
+  last_run_at: string | null;
+}
+
+export interface ReconciliationItem {
+  id: number;
+  sku: string;
+  local_name: string | null;
+  local_stock: number | null;
+  local_price: number | null;
+  wc_product_id: number | null;
+  wc_variation_id: number | null;
+  wc_name: string | null;
+  website_status: string | null;
+  status: ReconciliationStatus;
+  details: string | null;
+  last_checked_at: string | null;
+}
+
+export interface ReconciliationPage {
+  items: ReconciliationItem[];
+  page: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface ReconciliationQuery {
+  status?: "all" | ReconciliationStatus;
+  search?: string;
+  page?: number;
+  perPage?: number;
 }

@@ -7,7 +7,20 @@ export const operationalStatuses: { value: OrderStatus; label: string; descripti
   { value: "cancelled", label: "ملغي", description: "تم إيقاف تنفيذ الأوردر" },
 ];
 
-const fallbackTransitions: Record<OrderStatus, OrderStatus[]> = {
+const statusLabels: Record<OrderStatus, string> = {
+  pending: "بانتظار الدفع",
+  "on-hold": "قيد الانتظار",
+  processing: "جاري التجهيز",
+  completed: "تم التسليم",
+  cancelled: "ملغي",
+  refunded: "مسترد",
+  failed: "فشل الدفع",
+  "checkout-draft": "مسودة دفع",
+};
+
+const fallbackTransitions: Partial<Record<OrderStatus, OrderStatus[]>> = {
+  pending: ["on-hold", "processing", "cancelled"],
+  failed: ["on-hold", "processing", "cancelled"],
   "on-hold": ["processing", "cancelled"],
   processing: ["on-hold", "completed", "cancelled"],
   completed: [],
@@ -19,5 +32,5 @@ export function allowedStatusTransitions(order: Order) {
 }
 
 export function statusLabel(status: OrderStatus) {
-  return operationalStatuses.find((item) => item.value === status)?.label || status;
+  return statusLabels[status] || status;
 }

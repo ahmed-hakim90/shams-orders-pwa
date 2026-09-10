@@ -15,14 +15,16 @@ import { orderConfirmationWhatsAppUrl } from "@/lib/whatsapp";
 import { allowedStatusTransitions, operationalStatuses, statusLabel } from "@/lib/order-workflow";
 
 const statusOptions: { value: "all" | OrderStatus; label: string }[] = [
-  { value: "all", label: "الكل" }, { value: "processing", label: "جاري التنفيذ" },
-  { value: "on-hold", label: "قيد الانتظار" }, { value: "completed", label: "مكتمل" },
-  { value: "cancelled", label: "ملغي" },
+  { value: "all", label: "كل الحالات" }, { value: "pending", label: "بانتظار الدفع" },
+  { value: "processing", label: "جاري التنفيذ" }, { value: "on-hold", label: "قيد الانتظار" },
+  { value: "completed", label: "مكتمل" }, { value: "cancelled", label: "ملغي" },
+  { value: "refunded", label: "مسترد" }, { value: "failed", label: "فشل الدفع" },
+  { value: "checkout-draft", label: "مسودة دفع" },
 ];
 type NotificationEvent = { id: string; orderId: number; orderNumber: string; title: string; message: string; createdAt: string };
 type ListPreferences = { query: string; status: "all" | OrderStatus; dateFrom: string; dateTo: string; branch: string; paymentMethod: string };
 const defaultListPreferences: ListPreferences = { query: "", status: "all", dateFrom: "", dateTo: "", branch: "", paymentMethod: "" };
-const ordersPerPage = 20;
+const ordersPerPage = 50;
 
 export function OrdersApp() {
   const router = useRouter();
@@ -66,6 +68,7 @@ export function OrdersApp() {
   const [toast, setToast] = useState<NotificationEvent | null>(null);
   const knownOrders = useRef<Map<number, Order>>(new Map((isDemoMode ? demoOrders : initialSnapshot?.orders || []).map((order) => [order.id, order])));
   const filtersMounted = useRef(false);
+  const loadMoreTrigger = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (isDemoMode) return;
@@ -157,8 +160,9 @@ export function OrdersApp() {
       try {
         const result = await getOrders({ ...currentOrderQuery("", status, dateFrom, dateTo, branchFilter, paymentFilter), perPage: ordersPerPage });
         const events = detectOrderEvents(knownOrders.current, result.orders, user);
-        knownOrders.current = new Map(result.orders.map((order) => [order.id, order]));
-        setOrders(result.orders); setPage(1); setTotalOrders(result.total); setTotalPages(result.totalPages);
+        result.orders.forEach((order) => knownOrders.current.set(order.id, order));
+        setOrders((current) => mergeOrdersNewestFirst(current, result.orders));
+        setTotalOrders(result.total); setTotalPages(result.totalPages);
         publishEvents(events);
       } catch { /* Keep the last known list during a temporary network failure. */ }
     };
@@ -167,6 +171,18 @@ export function OrdersApp() {
     // publishEvents intentionally shares this polling lifecycle's current user and permission state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [branchFilter, dateFrom, dateTo, notificationsEnabled, paymentFilter, status, user]);
+
+  useEffect(() => {
+    const trigger = loadMoreTrigger.current;
+    if (!trigger || isDemoMode || loading || loadingMore || page >= totalPages || view !== "orders") return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void loadMoreOrders();
+    }, { rootMargin: "320px 0px" });
+    observer.observe(trigger);
+    return () => observer.disconnect();
+    // loadMoreOrders reads the current page/filter state represented by these dependencies.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, loadingMore, page, totalPages, view]);
 
   function publishEvents(events: NotificationEvent[]) {
     if (!events.length || !user) return;
@@ -250,8 +266,9 @@ export function OrdersApp() {
     try {
       const [ordersPage, nextBranches] = await Promise.all([getOrders({ ...currentOrderQuery("", status, dateFrom, dateTo, branchFilter, paymentFilter), perPage: ordersPerPage }), user?.role === "admin" ? getBranches() : Promise.resolve([])]);
       const events = user ? detectOrderEvents(knownOrders.current, ordersPage.orders, user) : [];
-      knownOrders.current = new Map(ordersPage.orders.map((order) => [order.id, order]));
-      setOrders(ordersPage.orders); setBranches(nextBranches); setPage(1); setTotalOrders(ordersPage.total); setTotalPages(ordersPage.totalPages);
+      ordersPage.orders.forEach((order) => knownOrders.current.set(order.id, order));
+      setOrders((current) => mergeOrdersNewestFirst(current, ordersPage.orders));
+      setBranches(nextBranches); setTotalOrders(ordersPage.total); setTotalPages(ordersPage.totalPages);
       publishEvents(events);
     } catch (cause) {
       if (isAuthenticationError(cause)) { clearStoredToken(); clearDashboardSnapshot(); clearOrderSnapshots(); setUser(null); }
@@ -265,7 +282,7 @@ export function OrdersApp() {
     try {
       const nextPage = page + 1;
       const result = await getOrders({ ...currentOrderQuery("", status, dateFrom, dateTo, branchFilter, paymentFilter), page: nextPage, perPage: ordersPerPage });
-      setOrders((current) => Array.from(new Map([...current, ...result.orders].map((order) => [order.id, order])).values()));
+      setOrders((current) => mergeOrdersNewestFirst(current, result.orders));
       result.orders.forEach((order) => knownOrders.current.set(order.id, order));
       setPage(nextPage); setTotalOrders(result.total); setTotalPages(result.totalPages);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "تعذر تحميل أوردرات إضافية"); }
@@ -352,6 +369,7 @@ export function OrdersApp() {
           <button className={`nav-item ${view === "overview" ? "is-active" : ""}`} aria-current={view === "overview" ? "page" : undefined} onClick={() => { setView("overview"); setMenuOpen(false); }}><Icon name="grid" /><span>نظرة عامة</span></button>
           <button className={`nav-item ${view === "orders" ? "is-active" : ""}`} aria-current={view === "orders" ? "page" : undefined} onClick={() => { setView("orders"); setMenuOpen(false); }}><Icon name="orders" /><span>الأوردرات</span><b>{counts.total}</b></button>
           {user.role === "admin" && <button className={`nav-item ${view === "branches" ? "is-active" : ""}`} aria-current={view === "branches" ? "page" : undefined} onClick={() => { setView("branches"); setMenuOpen(false); }}><Icon name="store" /><span>الفروع</span><b>{branches.length}</b></button>}
+          {user.role === "admin" && <button className="nav-item" onClick={() => { setMenuOpen(false); router.push("/catalog"); }}><Icon name="grid" /><span>مطابقة الكتالوج</span></button>}
         </nav>
         <div className="profile"><span>{user.name.slice(0, 1)}</span><div><strong>{user.name}</strong><small>{user.role === "admin" ? "مدير النظام" : "مسؤول الفرع"}</small></div><button onClick={logout} aria-label="تسجيل الخروج"><Icon name="logout" /></button></div>
       </aside>
@@ -390,7 +408,7 @@ export function OrdersApp() {
             {filtersOpen && <div className="advanced-filters" id="advanced-order-filters"><label>من تاريخ<input type="date" value={dateFrom} max={dateTo || undefined} onChange={(event) => setDateFrom(event.target.value)} /></label><label>إلى تاريخ<input type="date" value={dateTo} min={dateFrom || undefined} onChange={(event) => setDateTo(event.target.value)} /></label>{user.role === "admin" && <label>الفرع<select value={branchFilter} onChange={(event) => setBranchFilter(event.target.value)}><option value="">كل الفروع</option><option value="unassigned">بدون فرع</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>}<label>طريقة الدفع<select value={paymentFilter} onChange={(event) => setPaymentFilter(event.target.value)}><option value="">كل طرق الدفع</option>{paymentMethods.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><button className="clear-filters" disabled={!dateFrom && !dateTo && !branchFilter && !paymentFilter} onClick={() => { setDateFrom(""); setDateTo(""); setBranchFilter(""); setPaymentFilter(""); }}>مسح الفلاتر</button></div>}
             <div className="results-summary" id="search-results-count" aria-live="polite"><strong>{(query.trim() ? filtered.length : isDemoMode ? filtered.length : totalOrders).toLocaleString("ar-EG")}</strong> أوردر مطابق{query && <span>للبحث عن «{query.trim()}»</span>}</div>
             {user.role === "admin" && selectedIds.size > 0 && <div className="bulk-bar" role="region" aria-label="توزيع الأوردرات المحددة"><strong>تم اختيار {selectedIds.size.toLocaleString("ar-EG")} أوردر</strong><label><span className="sr-only">اختار الفرع</span><select value={bulkBranchId} onChange={(event) => setBulkBranchId(event.target.value ? Number(event.target.value) : "")}><option value="">اختار الفرع</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label><button className="primary" disabled={!bulkBranchId || bulkSaving} onClick={handleBulkAssign}>{bulkSaving ? "جاري التوزيع…" : "توزيع الأوردرات"}</button><button className="clear-selection" onClick={() => setSelectedIds(new Set())}>إلغاء التحديد</button></div>}
-            {loading ? <div className="state-box"><span className="loader"/>جاري تحميل الأوردرات…</div> : filtered.length === 0 ? <div className="state-box"><Icon name="search"/><strong>مفيش أوردرات مطابقة</strong><small>راجع الاسم أو رقم الأوردر، أو غيّر الفلاتر.</small>{(query || activeAdvancedFilterCount(dateFrom, dateTo, branchFilter, paymentFilter) > 0) && <button className="secondary" onClick={() => { setQuery(""); setDateFrom(""); setDateTo(""); setBranchFilter(""); setPaymentFilter(""); setStatus("all"); }}>مسح البحث والفلاتر</button>}</div> : <><OrderList orders={filtered} isAdmin={user.role === "admin"} selectedIds={selectedIds} quickOrderId={quickOrderId} quickSavingId={quickSavingId} onQuickToggle={(id) => setQuickOrderId((current) => current === id ? null : id)} onQuickStatus={handleQuickStatus} onQuickFollowUp={handleQuickFollowUp} onSelect={openOrder} onToggle={(id) => setSelectedIds((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onToggleAll={() => setSelectedIds((current) => filtered.every((order) => current.has(order.id)) ? new Set() : new Set(filtered.map((order) => order.id)))} />{!isDemoMode && page < totalPages && <div className="load-more"><span>تم عرض {orders.length.toLocaleString("ar-EG")} من {totalOrders.toLocaleString("ar-EG")}</span><button className="secondary" disabled={loadingMore} onClick={loadMoreOrders}>{loadingMore ? "جاري التحميل…" : "تحميل أوردرات إضافية"}</button></div>}</>}
+            {loading ? <div className="state-box"><span className="loader"/>جاري تحميل الأوردرات…</div> : filtered.length === 0 ? <div className="state-box"><Icon name="search"/><strong>مفيش أوردرات مطابقة</strong><small>راجع الاسم أو رقم الأوردر، أو غيّر الفلاتر.</small>{(query || activeAdvancedFilterCount(dateFrom, dateTo, branchFilter, paymentFilter) > 0) && <button className="secondary" onClick={() => { setQuery(""); setDateFrom(""); setDateTo(""); setBranchFilter(""); setPaymentFilter(""); setStatus("all"); }}>مسح البحث والفلاتر</button>}</div> : <><OrderList orders={filtered} isAdmin={user.role === "admin"} selectedIds={selectedIds} quickOrderId={quickOrderId} quickSavingId={quickSavingId} onQuickToggle={(id) => setQuickOrderId((current) => current === id ? null : id)} onQuickStatus={handleQuickStatus} onQuickFollowUp={handleQuickFollowUp} onSelect={openOrder} onToggle={(id) => setSelectedIds((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onToggleAll={() => setSelectedIds((current) => filtered.every((order) => current.has(order.id)) ? new Set() : new Set(filtered.map((order) => order.id)))} />{!isDemoMode && page < totalPages && <div ref={loadMoreTrigger} className="load-more" aria-live="polite"><span>تم عرض {orders.length.toLocaleString("ar-EG")} من {totalOrders.toLocaleString("ar-EG")} — باقي الأوردرات بتتحمل تلقائيًا</span><button className="secondary" disabled={loadingMore} onClick={loadMoreOrders}>{loadingMore ? "جاري التحميل…" : "تحميل أوردرات إضافية الآن"}</button></div>}</>}
           </section>}
         </div>
       </main>
@@ -416,7 +434,7 @@ function Stat({ label, value, icon, tone }: { label: string; value: number; icon
 
 function Overview({ orders, counts, onOpenOrders, onOpenOrder }: { orders: Order[]; counts: { total: number; unassigned: number; active: number; completed: number }; onOpenOrders: () => void; onOpenOrder: (order: Order) => void }) {
   const recent = orders.slice(0, 5);
-  return <div className="overview-grid"><section className="overview-focus"><div><p>أولوية التشغيل</p><h2>{counts.unassigned ? `${counts.unassigned.toLocaleString("ar-EG")} أوردر محتاج توزيع` : "كل الأوردرات متوزعة"}</h2><span>{counts.active.toLocaleString("ar-EG")} أوردر قيد التنفيذ حاليًا</span></div><button className="primary" onClick={onOpenOrders}>فتح الأوردرات</button></section><section className="overview-recent"><header><div><h2>أحدث الأوردرات</h2><p>آخر الطلبات اللي وصلت للنظام</p></div><button onClick={onOpenOrders}>عرض الكل</button></header>{recent.length ? <div>{recent.map((order) => <button key={order.id} onClick={() => onOpenOrder(order)}><span><strong>#{order.number}</strong><small>{order.customer}</small></span><Status status={order.status} label={order.status_label}/><b>{stripHtml(order.total)}</b></button>)}</div> : <div className="state-box"><Icon name="orders"/><strong>لسه مفيش أوردرات</strong></div>}</section></div>;
+  return <div className="overview-grid"><section className="overview-focus"><div><p>أولوية التشغيل</p><h2>{counts.unassigned ? `${counts.unassigned.toLocaleString("ar-EG")} أوردر محتاج توزيع` : "كل الأوردرات متوزعة"}</h2><span>{counts.active.toLocaleString("ar-EG")} أوردر قيد التنفيذ حاليًا</span></div><button className="primary" onClick={onOpenOrders}>فتح الأوردرات</button></section><section className="overview-recent"><header><div><h2>أحدث الأوردرات</h2><p>آخر الطلبات اللي وصلت للنظام</p></div><button onClick={onOpenOrders}>عرض الكل</button></header>{recent.length ? <div>{recent.map((order) => <button key={order.id} onClick={() => onOpenOrder(order)}><span><strong>#{order.number}</strong><small>{order.customer}</small></span><Status status={order.status} label={statusLabel(order.status)}/><b>{stripHtml(order.total)}</b></button>)}</div> : <div className="state-box"><Icon name="orders"/><strong>لسه مفيش أوردرات</strong></div>}</section></div>;
 }
 
 function BranchesPage({ branches }: { branches: Array<Branch & { total: number; active: number; completed: number }> }) {
@@ -425,7 +443,7 @@ function BranchesPage({ branches }: { branches: Array<Branch & { total: number; 
 
 function OrderList({ orders, isAdmin, selectedIds, quickOrderId, quickSavingId, onSelect, onToggle, onToggleAll, onQuickToggle, onQuickStatus, onQuickFollowUp }: { orders: Order[]; isAdmin: boolean; selectedIds: Set<number>; quickOrderId: number | null; quickSavingId: number | null; onSelect: (order: Order) => void; onToggle: (id: number) => void; onToggleAll: () => void; onQuickToggle: (id: number) => void; onQuickStatus: (order: Order, status: OrderStatus) => void; onQuickFollowUp: (order: Order, note: string) => Promise<boolean> }) {
   const allSelected = orders.length > 0 && orders.every((order) => selectedIds.has(order.id));
-  return <div className={`order-list ${isAdmin ? "has-selection" : ""}`}><div className="table-head">{isAdmin && <label className="select-order"><input type="checkbox" checked={allSelected} onChange={onToggleAll}/><span className="sr-only">تحديد كل الأوردرات الظاهرة</span></label>}<span>الأوردر</span><span>العميل</span><span>الدفع</span><span>الفرع</span><span>الحالة</span><span>الإجمالي</span><span /></div>{orders.map((order) => { const quickOpen = quickOrderId === order.id; return <div className={`order-row-shell ${selectedIds.has(order.id) ? "is-selected" : ""} ${quickOpen ? "has-quick-panel" : ""}`} key={order.id}>{isAdmin && <label className="select-order"><input type="checkbox" checked={selectedIds.has(order.id)} onChange={() => onToggle(order.id)}/><span className="sr-only">تحديد الأوردر رقم {order.number}</span></label>}<button className="order-row" onClick={() => onSelect(order)} aria-label={`فتح الأوردر رقم ${order.number} للعميل ${order.customer}`}><span className="order-id"><b>#{order.number}</b><small>{formatDate(order.created_at)}</small></span><span className="customer"><b>{order.customer}</b><small dir="ltr">{order.phone || "بدون رقم هاتف"}</small></span><span className="payment"><b>{order.payment_method || "—"}</b><small className={order.paid ? "paid" : "unpaid"}>{order.paid ? "مدفوع" : "غير مدفوع"}</small></span><span className={`branch ${order.branch ? "" : "muted"}`}>{order.branch?.name || "لم يتم التوزيع"}</span><span className="order-status"><Status status={order.status} label={order.status_label} /></span><span className="total">{stripHtml(order.total)}</span><span className="row-arrow"><Icon name="chevron" /></span></button><div className="mobile-order-actions">{order.phone && <a href={`tel:${phoneDigits(order.phone)}`} title="اتصال" aria-label={`الاتصال بالعميل ${order.customer}`}><Icon name="phone" /><span>اتصال</span></a>}{order.phone && <a href={orderConfirmationWhatsAppUrl(order)} target="_blank" rel="noreferrer" title="تأكيد عبر واتساب" aria-label={`إرسال رسالة تأكيد الأوردر للعميل ${order.customer}`}><Icon name="whatsapp"/><span>واتساب</span></a>}<button className={quickOpen ? "is-active" : ""} title="تشغيل سريع" aria-label={`تشغيل سريع للأوردر رقم ${order.number}`} aria-expanded={quickOpen} aria-controls={`quick-order-${order.id}`} onClick={() => onQuickToggle(order.id)}><Icon name="grid"/><span>تشغيل</span></button><button title="فتح التفاصيل" aria-label={`فتح تفاصيل الأوردر رقم ${order.number}`} onClick={() => onSelect(order)}><Icon name="eye"/><span>التفاصيل</span></button></div>{quickOpen && <QuickOrderPanel order={order} saving={quickSavingId === order.id} onStatus={(status) => onQuickStatus(order, status)} onFollowUp={(note) => onQuickFollowUp(order, note)} />}</div>; })}</div>;
+  return <div className={`order-list ${isAdmin ? "has-selection" : ""}`}><div className="table-head">{isAdmin && <label className="select-order"><input type="checkbox" checked={allSelected} onChange={onToggleAll}/><span className="sr-only">تحديد كل الأوردرات الظاهرة</span></label>}<span>الأوردر</span><span>العميل</span><span>الدفع</span><span>الفرع</span><span>الحالة</span><span>الإجمالي</span><span /></div>{orders.map((order) => { const quickOpen = quickOrderId === order.id; return <div className={`order-row-shell ${selectedIds.has(order.id) ? "is-selected" : ""} ${quickOpen ? "has-quick-panel" : ""}`} key={order.id}>{isAdmin && <label className="select-order"><input type="checkbox" checked={selectedIds.has(order.id)} onChange={() => onToggle(order.id)}/><span className="sr-only">تحديد الأوردر رقم {order.number}</span></label>}<button className="order-row" onClick={() => onSelect(order)} aria-label={`فتح الأوردر رقم ${order.number} للعميل ${order.customer}`}><span className="order-id"><b>#{order.number}</b><small>{formatDate(order.created_at)}</small></span><span className="customer"><b>{order.customer}</b><small dir="ltr">{order.phone || "بدون رقم هاتف"}</small></span><span className="payment"><b>{order.payment_method || "—"}</b><small className={order.paid ? "paid" : "unpaid"}>{order.paid ? "مدفوع" : "غير مدفوع"}</small></span><span className={`branch ${order.branch ? "" : "muted"}`}>{order.branch?.name || "لم يتم التوزيع"}</span><span className="order-status"><Status status={order.status} label={statusLabel(order.status)} /></span><span className="total">{stripHtml(order.total)}</span><span className="row-arrow"><Icon name="chevron" /></span></button><div className="mobile-order-actions">{order.phone && <a href={`tel:${phoneDigits(order.phone)}`} title="اتصال" aria-label={`الاتصال بالعميل ${order.customer}`}><Icon name="phone" /><span>اتصال</span></a>}{order.phone && <a href={orderConfirmationWhatsAppUrl(order)} target="_blank" rel="noreferrer" title="تأكيد عبر واتساب" aria-label={`إرسال رسالة تأكيد الأوردر للعميل ${order.customer}`}><Icon name="whatsapp"/><span>واتساب</span></a>}<button className={quickOpen ? "is-active" : ""} title="تشغيل سريع" aria-label={`تشغيل سريع للأوردر رقم ${order.number}`} aria-expanded={quickOpen} aria-controls={`quick-order-${order.id}`} onClick={() => onQuickToggle(order.id)}><Icon name="grid"/><span>تشغيل</span></button><button title="فتح التفاصيل" aria-label={`فتح تفاصيل الأوردر رقم ${order.number}`} onClick={() => onSelect(order)}><Icon name="eye"/><span>التفاصيل</span></button></div>{quickOpen && <QuickOrderPanel order={order} saving={quickSavingId === order.id} onStatus={(status) => onQuickStatus(order, status)} onFollowUp={(note) => onQuickFollowUp(order, note)} />}</div>; })}</div>;
 }
 
 function QuickOrderPanel({ order, saving, onStatus, onFollowUp }: { order: Order; saving: boolean; onStatus: (status: OrderStatus) => void; onFollowUp: (note: string) => Promise<boolean> }) {
@@ -437,6 +455,11 @@ function QuickOrderPanel({ order, saving, onStatus, onFollowUp }: { order: Order
 function Status({ status, label }: { status: OrderStatus; label: string }) { return <span className={`status status-${status}`}><i />{label}</span>; }
 
 function stripHtml(value: string) { return value.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " "); }
+function mergeOrdersNewestFirst(current: Order[], incoming: Order[]) {
+  const merged = new Map(current.map((order) => [order.id, order]));
+  incoming.forEach((order) => merged.set(order.id, order));
+  return Array.from(merged.values()).sort((left, right) => right.created_at.localeCompare(left.created_at) || right.id - left.id);
+}
 function withListActivity(order: Order, content: string): Order { return { ...order, activity: [{ id: Date.now(), content, created_at: new Date().toISOString() }, ...(order.activity || [])] }; }
 function normalizeSearch(value: string) {
   const easternArabicDigits = "٠١٢٣٤٥٦٧٨٩";
@@ -484,7 +507,7 @@ function detectOrderEvents(previous: Map<number, Order>, nextOrders: Order[], us
     if (orderSignature(old) === orderSignature(order)) return [];
     let message = `تم تحديث بيانات الأوردر • ${stripHtml(order.total)}`;
     if (old.branch?.id !== order.branch?.id) message = order.branch ? `تم توزيعه على ${order.branch.name}` : "تم إلغاء توزيع الأوردر";
-    else if (old.status !== order.status) message = `الحالة الجديدة: ${order.status_label}`;
+    else if (old.status !== order.status) message = `الحالة الجديدة: ${statusLabel(order.status)}`;
     else if (old.paid !== order.paid) message = order.paid ? "تم تسجيل الأوردر كمدفوع" : "تم تحديث الأوردر إلى غير مدفوع";
     return [{ id: `${order.id}-${order.modified_at || createdAt}-updated`, orderId: order.id, orderNumber: order.number, title: `تحديث على أوردر #${order.number}`, message, createdAt }];
   }).reverse();
