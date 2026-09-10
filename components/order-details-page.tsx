@@ -3,7 +3,7 @@
 import Image, { type ImageLoaderProps } from "next/image";
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { addFollowUp, assignOrder, getBranches, getMe, getOrder, getStoredToken, isDemoMode, updateOrderStatus } from "@/lib/api";
+import { addFollowUp, assignOrder, getBranches, getMe, getOrder, getStoredToken, isDemoMode, updateOrderPayment, updateOrderStatus } from "@/lib/api";
 import { demoBranches, demoOrders, demoUser } from "@/lib/demo-data";
 import type { Branch, Order, OrderItem, OrderStatus, User } from "@/lib/types";
 import { Icon } from "./icons";
@@ -70,6 +70,19 @@ export function OrderDetailsPage({ orderId }: { orderId: number }) {
       const updated = isDemoMode ? withDemoActivity({ ...order, status, status_label: label, allowed_statuses: undefined }, `تم تغيير الحالة إلى «${label}» بواسطة ${user?.name}.`) : await updateOrderStatus(order.id, status);
       setOrder(updated); setOrderSnapshot(updated); setMessage("تم تحديث حالة الأوردر");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "تعذر تحديث الحالة"); }
+    finally { setSaving(false); }
+  }
+
+  async function changePayment(paid: boolean) {
+    if (!order || order.paid === paid) return;
+    const prompt = paid ? "تأكيد استلام قيمة الأوردر بالكامل؟" : "تأكيد إرجاع حالة الدفع إلى غير مدفوع؟";
+    if (!window.confirm(prompt)) return;
+    setSaving(true); setError(""); setMessage("");
+    try {
+      const activity = paid ? `تم تسجيل تحصيل قيمة الأوردر بواسطة ${user?.name}.` : `تم تعديل الدفع إلى غير محصل بواسطة ${user?.name}.`;
+      const updated = isDemoMode ? withDemoActivity({ ...order, paid }, activity) : await updateOrderPayment(order.id, paid);
+      setOrder(updated); setOrderSnapshot(updated); setMessage(paid ? "تم تسجيل تحصيل قيمة الأوردر" : "تم تعديل الأوردر إلى غير مدفوع");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "تعذر تحديث حالة الدفع"); }
     finally { setSaving(false); }
   }
 
@@ -148,6 +161,8 @@ export function OrderDetailsPage({ orderId }: { orderId: number }) {
               <header><div><span className="section-icon violet"><Icon name="orders"/></span><div><h2>الدفع</h2><p>طريقة وحالة التحصيل</p></div></div></header>
               <div className="payment-row"><span>طريقة الدفع</span><strong>{order.payment_method || "غير محددة"}</strong></div>
               <div className="payment-row"><span>حالة الدفع</span><strong className={order.paid ? "paid" : "unpaid"}>{order.paid ? "مدفوع بالكامل" : "غير مدفوع"}</strong></div>
+              <button type="button" className={`payment-action ${order.paid ? "is-unpaid-action" : "is-paid-action"}`} disabled={saving} onClick={() => changePayment(!order.paid)}>{saving ? "جاري الحفظ…" : order.paid ? "تعديل إلى غير مدفوع" : "تسجيل تم التحصيل"}</button>
+              <small className="payment-help">تحديث الدفع لا يغيّر حالة تشغيل الأوردر.</small>
             </section>
           </aside>
 

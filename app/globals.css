@@ -102,6 +102,7 @@ main{min-width:0}.topbar{display:flex;min-height:82px;align-items:center;justify
 .order-page-shell .assignment{padding-top:12px;margin-top:12px}
 .order-page-shell .customer-card dl{gap:9px;margin:12px 0}
 .order-page-shell .payment-row{padding-top:11px;font-size:12px}
+.payment-action{width:100%;min-height:42px;padding:8px 12px;margin-top:14px;border:1px solid transparent;border-radius:10px;font:inherit;font-size:12px;font-weight:800;cursor:pointer}.payment-action.is-paid-action{border-color:#bde7d5;background:var(--green-soft);color:var(--green)}.payment-action.is-unpaid-action{border-color:#f0c7bd;background:#fff7f5;color:#a43e2c}.payment-action:disabled{cursor:not-allowed;opacity:.6}.payment-help{display:block;margin-top:8px;color:var(--muted);font-size:10px;line-height:1.6}
 .order-page-shell .follow-up-form{padding:12px 0}
 .order-page-shell .follow-up-form textarea{min-height:68px}
 .order-page-shell .activity-list article{gap:9px;padding:10px 0}

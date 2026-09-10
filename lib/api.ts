@@ -95,4 +95,5 @@ export const getOrder = (id: number) => request<Order>(`/orders/${id}`);
 export const assignOrder = (id: number, branch_user_id: number) => request<Order>(`/orders/${id}/assign`, { method: "POST", body: JSON.stringify({ branch_user_id }) });
 export const bulkAssignOrders = (order_ids: number[], branch_user_id: number) => request<Order[]>("/orders/bulk-assign", { method: "POST", body: JSON.stringify({ order_ids, branch_user_id }) });
 export const updateOrderStatus = (id: number, status: OrderStatus) => request<Order>(`/orders/${id}/status`, { method: "POST", body: JSON.stringify({ status }) });
+export const updateOrderPayment = (id: number, paid: boolean) => request<Order>(`/orders/${id}/payment`, { method: "POST", body: JSON.stringify({ paid }) });
 export const addFollowUp = (id: number, note: string) => request<Order>(`/orders/${id}/follow-up`, { method: "POST", body: JSON.stringify({ note }) });
