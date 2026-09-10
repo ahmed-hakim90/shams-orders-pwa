@@ -162,7 +162,7 @@ main{min-width:0}.topbar{display:flex;min-height:82px;align-items:center;justify
 @media(max-width:780px){.mobile-order-actions{grid-template-columns:repeat(4,1fr)}.quick-order-panel{grid-template-columns:1fr;gap:16px;padding:14px 12px}.quick-order-panel form>div{grid-template-columns:minmax(0,1fr) 74px}.quick-statuses button{min-height:42px;flex:1}.quick-order-panel .primary{padding-inline:10px}}
 @media(max-width:360px){.mobile-order-actions{gap:4px}.mobile-order-actions a,.mobile-order-actions button{font-size:9px}.quick-order-panel form>div{grid-template-columns:1fr}.quick-order-panel .primary{width:100%}}
 
-.status-failed{background:var(--red-soft);color:var(--red)}.status-pending,.status-checkout-draft{background:var(--amber-soft);color:var(--amber)}.status-refunded{background:var(--violet-soft);color:var(--violet)}
+.order-row-shell{content-visibility:auto;contain-intrinsic-size:auto 76px}.status-failed{background:var(--red-soft);color:var(--red)}.status-pending,.status-checkout-draft{background:var(--amber-soft);color:var(--amber)}.status-refunded{background:var(--violet-soft);color:var(--violet)}
 
 /* Catalog Reconciliation: review-only dashboard. */
 .recon-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:20px}.stat.is-meta strong{font-size:15px}.recon-empty-hint{margin:0;color:var(--muted);font-size:12px}

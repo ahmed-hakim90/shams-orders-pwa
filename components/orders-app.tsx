@@ -69,6 +69,7 @@ export function OrdersApp() {
   const knownOrders = useRef<Map<number, Order>>(new Map((isDemoMode ? demoOrders : initialSnapshot?.orders || []).map((order) => [order.id, order])));
   const filtersMounted = useRef(false);
   const loadMoreTrigger = useRef<HTMLDivElement | null>(null);
+  const allOrdersLoadKey = useRef("");
 
   useEffect(() => {
     if (isDemoMode) return;
@@ -183,6 +184,36 @@ export function OrdersApp() {
     // loadMoreOrders reads the current page/filter state represented by these dependencies.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, loadingMore, page, totalPages, view]);
+
+  useEffect(() => {
+    if (isDemoMode || !user || status !== "all" || loading || totalPages <= 1 || orders.length >= totalOrders) return;
+    const loadKey = [dateFrom, dateTo, branchFilter, paymentFilter, totalOrders].join("|");
+    if (allOrdersLoadKey.current === loadKey) return;
+    allOrdersLoadKey.current = loadKey;
+    let cancelled = false;
+    const loadEveryPage = async () => {
+      setLoadingMore(true);
+      try {
+        for (let firstPage = 2; firstPage <= totalPages && !cancelled; firstPage += 3) {
+          const pageNumbers = Array.from({ length: Math.min(3, totalPages - firstPage + 1) }, (_, index) => firstPage + index);
+          const results = await Promise.all(pageNumbers.map((nextPage) => getOrders({ ...currentOrderQuery("", status, dateFrom, dateTo, branchFilter, paymentFilter), page: nextPage, perPage: ordersPerPage })));
+          if (cancelled) return;
+          const incoming = results.flatMap((result) => result.orders);
+          incoming.forEach((order) => knownOrders.current.set(order.id, order));
+          setOrders((current) => mergeOrdersNewestFirst(current, incoming));
+          setPage(pageNumbers.at(-1) || firstPage);
+        }
+      } catch (cause) {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "تعذر تحميل كل الأوردرات");
+      } finally {
+        if (!cancelled) setLoadingMore(false);
+      }
+    };
+    void loadEveryPage();
+    return () => { cancelled = true; setLoadingMore(false); };
+    // orders.length changes as each batch arrives; restarting here would cancel the same full-list load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branchFilter, dateFrom, dateTo, loading, paymentFilter, status, totalOrders, totalPages, user]);
 
   function publishEvents(events: NotificationEvent[]) {
     if (!events.length || !user) return;
