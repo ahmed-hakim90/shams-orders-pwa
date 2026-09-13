@@ -108,7 +108,7 @@ export function OrdersApp() {
       setLoading(true); setError("");
       try {
         const result = await getOrders({ ...currentOrderQuery("", status, dateFrom, dateTo, branchFilter, paymentFilter), perPage: ordersPerPage });
-        knownOrders.current = new Map(result.orders.map((order) => [order.id, order]));
+        result.orders.forEach((order) => knownOrders.current.set(order.id, order));
         setOrders(result.orders); setPage(1); setTotalOrders(result.total); setTotalPages(result.totalPages); setSelectedIds(new Set());
       } catch (cause) {
         if (isAuthenticationError(cause)) { clearStoredToken(); clearDashboardSnapshot(); clearOrderSnapshots(); setUser(null); }
@@ -531,16 +531,92 @@ function formatNotificationDate(value: string) { return new Intl.DateTimeFormat(
 function notificationStorageKey(userId: number) { return `shams_orders_notification_feed_${userId}`; }
 function orderSignature(order: Order) { return order.modified_at || [order.status, order.paid, order.total, order.branch?.id || 0, order.customer, order.phone].join("|"); }
 function detectOrderEvents(previous: Map<number, Order>, nextOrders: Order[], user: User): NotificationEvent[] {
-  const createdAt = new Date().toISOString();
+  const now = Date.now();
+  const createdAt = new Date(now).toISOString();
+  const NEW_ORDER_WINDOW_MS = 10 * 60 * 1000;
+
   return nextOrders.flatMap((order) => {
     const old = previous.get(order.id);
-    if (!old) return [{ id: `${order.id}-${order.modified_at || createdAt}-new`, orderId: order.id, orderNumber: order.number, title: user.role === "branch" ? `تم توزيع أوردر #${order.number} عليك` : `أوردر جديد #${order.number}`, message: `${order.customer} • ${stripHtml(order.total)}`, createdAt }];
+
+    if (!old) {
+      const orderCreatedAt = new Date(order.created_at).getTime();
+      const ageMs = Number.isFinite(orderCreatedAt) ? now - orderCreatedAt : Number.POSITIVE_INFINITY;
+
+      // Admin: only treat a genuinely recent WooCommerce order as a new order.
+      if (user.role === "admin") {
+        if (ageMs < 0 || ageMs > NEW_ORDER_WINDOW_MS) return [];
+
+        return [{
+          id: `new-order-${order.id}`,
+          orderId: order.id,
+          orderNumber: order.number,
+          title: `أوردر جديد #${order.number}`,
+          message: `${order.customer} • ${stripHtml(order.total)}`,
+          createdAt,
+        }];
+      }
+
+      // Branch users should not get an assignment notification merely because
+      // an existing/old order appeared in the current query for the first time.
+      return [];
+    }
+
     if (orderSignature(old) === orderSignature(order)) return [];
-    let message = `تم تحديث بيانات الأوردر • ${stripHtml(order.total)}`;
-    if (old.branch?.id !== order.branch?.id) message = order.branch ? `تم توزيعه على ${order.branch.name}` : "تم إلغاء توزيع الأوردر";
-    else if (old.status !== order.status) message = `الحالة الجديدة: ${statusLabel(order.status)}`;
-    else if (old.paid !== order.paid) message = order.paid ? "تم تسجيل الأوردر كمدفوع" : "تم تحديث الأوردر إلى غير مدفوع";
-    return [{ id: `${order.id}-${order.modified_at || createdAt}-updated`, orderId: order.id, orderNumber: order.number, title: `تحديث على أوردر #${order.number}`, message, createdAt }];
+
+    if (old.branch?.id !== order.branch?.id) {
+      if (user.role === "branch" && order.branch) {
+        return [{
+          id: `assignment-${order.id}-${order.modified_at || createdAt}`,
+          orderId: order.id,
+          orderNumber: order.number,
+          title: `تم توزيع أوردر #${order.number} عليك`,
+          message: `${order.customer} • ${stripHtml(order.total)}`,
+          createdAt,
+        }];
+      }
+
+      if (user.role === "admin") {
+        return [{
+          id: `branch-update-${order.id}-${order.modified_at || createdAt}`,
+          orderId: order.id,
+          orderNumber: order.number,
+          title: `تحديث على أوردر #${order.number}`,
+          message: order.branch ? `تم توزيعه على ${order.branch.name}` : "تم إلغاء توزيع الأوردر",
+          createdAt,
+        }];
+      }
+    }
+
+    if (old.status !== order.status) {
+      return [{
+        id: `status-${order.id}-${order.modified_at || createdAt}`,
+        orderId: order.id,
+        orderNumber: order.number,
+        title: `تحديث على أوردر #${order.number}`,
+        message: `الحالة الجديدة: ${statusLabel(order.status)}`,
+        createdAt,
+      }];
+    }
+
+    if (old.paid !== order.paid) {
+      return [{
+        id: `payment-${order.id}-${order.modified_at || createdAt}`,
+        orderId: order.id,
+        orderNumber: order.number,
+        title: `تحديث على أوردر #${order.number}`,
+        message: order.paid ? "تم تسجيل الأوردر كمدفوع" : "تم تحديث الأوردر إلى غير مدفوع",
+        createdAt,
+      }];
+    }
+
+    return [{
+      id: `update-${order.id}-${order.modified_at || createdAt}`,
+      orderId: order.id,
+      orderNumber: order.number,
+      title: `تحديث على أوردر #${order.number}`,
+      message: `تم تحديث بيانات الأوردر • ${stripHtml(order.total)}`,
+      createdAt,
+    }];
   }).reverse();
 }
 async function showSystemNotification(item: NotificationEvent) {
