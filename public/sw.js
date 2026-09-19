@@ -1,4 +1,4 @@
-const CACHE = "shams-orders-v4";
+const CACHE = "shams-orders-v5";
 const SHELL = ["/", "/manifest.webmanifest", "/shams-icon-192.png", "/shams-icon-512.png", "/shams-stores-logo.png"];
 
 self.addEventListener("install", (event) => {
@@ -12,7 +12,8 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET" || new URL(event.request.url).pathname.startsWith("/api/")) return;
+  const url = new URL(event.request.url);
+  if (event.request.method !== "GET" || url.origin !== self.location.origin || event.request.mode !== "navigate" || url.pathname.startsWith("/api/") || url.pathname.startsWith("/wp-json/")) return;
   event.respondWith(fetch(event.request).catch(() => caches.match(event.request).then((response) => response || caches.match("/"))));
 });
 

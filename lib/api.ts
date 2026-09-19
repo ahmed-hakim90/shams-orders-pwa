@@ -1,8 +1,8 @@
 import type { Branch, Order, OrderQuery, OrdersPage, OrderStatus, ReconciliationItem, ReconciliationPage, ReconciliationQuery, ReconciliationSummary, User } from "./types";
 
 const baseUrl = process.env.NEXT_PUBLIC_SHAMS_WP_URL?.replace(/\/$/, "");
-const root = baseUrl ? `${baseUrl}/wp-json/shams-orders/v1` : null;
-const catalogRoot = baseUrl ? `${baseUrl}/wp-json/shams-catalog-reconciliation/v1` : null;
+const root = baseUrl ? "/api/wordpress/shams-orders/v1" : null;
+const catalogRoot = baseUrl ? "/api/wordpress/shams-catalog-reconciliation/v1" : null;
 export const wpAdminUrl = baseUrl ? `${baseUrl}/wp-admin` : null;
 const tokenKey = "shams_orders_token";
 const userKey = "shams_orders_user";
@@ -40,23 +40,29 @@ function storeUser(user: User, persistent = Boolean(localStorage.getItem(tokenKe
 
 export function isAuthenticationError(cause: unknown) { return cause instanceof ApiError && cause.status === 401; }
 
+async function readResponse<T>(response: Response): Promise<T> {
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw new ApiError(payload?.message || "تعذر الاتصال بـWordPress", response.status);
+  if (payload === null) throw new ApiError("وصل رد غير صالح من WordPress. حاول تاني أو تواصل مع مسؤول الموقع.", 502);
+  return payload as T;
+}
+
 async function request<T>(path: string, init: RequestInit = {}, base: string | null = root): Promise<T> {
   if (!base) throw new Error("demo_mode");
   const token = getStoredToken();
   const response = await fetch(`${base}${path}`, {
     ...init,
+    cache: "no-store",
     headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init.headers },
   });
-  if (!response.ok) throw new ApiError((await response.json().catch(() => null))?.message || "تعذر الاتصال بـWordPress", response.status);
-  return response.json() as Promise<T>;
+  return readResponse<T>(response);
 }
 
 async function requestOrders(path: string): Promise<OrdersPage> {
   if (!root) throw new Error("demo_mode");
   const token = getStoredToken();
-  const response = await fetch(`${root}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-  if (!response.ok) throw new ApiError((await response.json().catch(() => null))?.message || "تعذر الاتصال بـWordPress", response.status);
-  const orders = await response.json() as Order[];
+  const response = await fetch(`${root}${path}`, { cache: "no-store", headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  const orders = await readResponse<Order[]>(response);
   return {
     orders,
     page: Number(response.headers.get("X-WP-Page") || 1),
@@ -103,9 +109,8 @@ export const addFollowUp = (id: number, note: string) => request<Order>(`/orders
 async function requestReconciliationItems(path: string): Promise<ReconciliationPage> {
   if (!catalogRoot) throw new Error("demo_mode");
   const token = getStoredToken();
-  const response = await fetch(`${catalogRoot}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-  if (!response.ok) throw new ApiError((await response.json().catch(() => null))?.message || "تعذر الاتصال بـWordPress", response.status);
-  const items = await response.json() as ReconciliationItem[];
+  const response = await fetch(`${catalogRoot}${path}`, { cache: "no-store", headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  const items = await readResponse<ReconciliationItem[]>(response);
   return {
     items,
     page: Number(response.headers.get("X-WP-Page") || 1),

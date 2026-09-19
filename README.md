@@ -26,3 +26,11 @@ Copy `.env.example` to `.env.local` and set `NEXT_PUBLIC_SHAMS_WP_URL` to connec
 - Self-contained bilingual A4 invoice rendered from the authenticated WooCommerce order payload, including addresses and canonical total rows.
 
 Background push handlers are prepared in the service worker. Push subscription persistence and delivery are intentionally deferred until the production origin and VAPID keys are configured.
+
+## WordPress transport
+
+Browser API calls use `/api/wordpress/shams-orders/v1` and `/api/wordpress/shams-catalog-reconciliation/v1`. Next.js rewrites these two namespaces to the configured `NEXT_PUBLIC_SHAMS_WP_URL` at build time, preserving bearer authentication, request bodies, query parameters and pagination headers. Set this URL to the canonical WordPress HTTPS origin (avoid redirecting aliases) and rebuild/redeploy the PWA when it changes. WordPress remains the authorization boundary; no shared service credential is added. API responses are private and not cached.
+
+The service worker v5 only provides the offline HTML shell for same-origin page navigation. API, cross-origin and asset requests bypass it. Invalid JSON responses produce a controlled connection error instead of a JSON parser exception.
+
+This transport correction is local and requires a PWA deployment to take effect. No WordPress activation or production configuration change was performed. After deployment, reload open PWA tabs to pick up the new worker and verify login, orders, branches, pagination and an authorized mutation in staging. Roll back by redeploying the previous PWA release if needed.
