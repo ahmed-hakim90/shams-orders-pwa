@@ -43,7 +43,7 @@ export function isAuthenticationError(cause: unknown) { return cause instanceof 
 async function readResponse<T>(response: Response): Promise<T> {
   const payload = await response.json().catch(() => null);
   if (!response.ok) throw new ApiError(payload?.message || "تعذر الاتصال بـWordPress", response.status);
-  if (payload === null) throw new ApiError("وصل رد غير صالح من WordPress. حاول تاني أو تواصل مع مسؤول الموقع.", 502);
+  if (payload === null) throw new ApiError(`وصل رد غير صالح من WordPress (${response.status} ${response.headers.get("content-type") || "بدون نوع محتوى"}). حاول تاني أو تواصل مع مسؤول الموقع.`, 502);
   return payload as T;
 }
 

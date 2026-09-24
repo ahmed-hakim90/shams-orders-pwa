@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { addFollowUp, bulkAssignOrders, clearStoredToken, getBranches, getMe, getOrders, getStoredToken, getStoredUser, isAuthenticationError, isDemoMode, login, updateOrderStatus } from "@/lib/api";
 import { demoBranches, demoOrders, demoUser } from "@/lib/demo-data";
-import type { Branch, Order, OrderStatus, User } from "@/lib/types";
+import type { Branch, Order, OrderQuery, OrdersPage, OrderStatus, User } from "@/lib/types";
 import { Icon } from "./icons";
 import { BrandLogo } from "./brand-logo";
 import { ServiceWorker } from "./service-worker";
@@ -25,6 +25,8 @@ type NotificationEvent = { id: string; orderId: number; orderNumber: string; tit
 type ListPreferences = { query: string; status: "all" | OrderStatus; dateFrom: string; dateTo: string; branch: string; paymentMethod: string };
 const defaultListPreferences: ListPreferences = { query: "", status: "all", dateFrom: "", dateTo: "", branch: "", paymentMethod: "" };
 const ordersPerPage = 50;
+const fullListBatchSize = 3;
+const fullListRetryDelayMs = 800;
 
 export function OrdersApp() {
   const router = useRouter();
@@ -53,6 +55,8 @@ export function OrdersApp() {
   const [totalOrders, setTotalOrders] = useState(isDemoMode ? demoOrders.length : initialSnapshot?.orders.length || 0);
   const [totalPages, setTotalPages] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [partialOrders, setPartialOrders] = useState(false);
+  const [fullListAttempt, setFullListAttempt] = useState(0);
   const paymentMethods = useMemo(() => {
     const discovered = paymentMethodEntries(orders);
     if (!paymentFilter || discovered.some(([value]) => value === paymentFilter)) return discovered;
@@ -187,24 +191,29 @@ export function OrdersApp() {
 
   useEffect(() => {
     if (isDemoMode || !user || status !== "all" || loading || totalPages <= 1 || orders.length >= totalOrders) return;
-    const loadKey = [dateFrom, dateTo, branchFilter, paymentFilter, totalOrders].join("|");
+    const loadKey = [dateFrom, dateTo, branchFilter, paymentFilter, totalOrders, fullListAttempt].join("|");
     if (allOrdersLoadKey.current === loadKey) return;
     allOrdersLoadKey.current = loadKey;
     let cancelled = false;
     const loadEveryPage = async () => {
       setLoadingMore(true);
+      setPartialOrders(false);
+      const query = currentOrderQuery("", status, dateFrom, dateTo, branchFilter, paymentFilter);
       try {
-        for (let firstPage = 2; firstPage <= totalPages && !cancelled; firstPage += 3) {
-          const pageNumbers = Array.from({ length: Math.min(3, totalPages - firstPage + 1) }, (_, index) => firstPage + index);
-          const results = await Promise.all(pageNumbers.map((nextPage) => getOrders({ ...currentOrderQuery("", status, dateFrom, dateTo, branchFilter, paymentFilter), page: nextPage, perPage: ordersPerPage })));
+        for (let firstPage = 2; firstPage <= totalPages && !cancelled; firstPage += fullListBatchSize) {
+          const pageNumbers = Array.from({ length: Math.min(fullListBatchSize, totalPages - firstPage + 1) }, (_, index) => firstPage + index);
+          const results = await getOrdersBatch(pageNumbers, query);
           if (cancelled) return;
+          if (!results) { setPartialOrders(true); break; }
           const incoming = results.flatMap((result) => result.orders);
           incoming.forEach((order) => knownOrders.current.set(order.id, order));
           setOrders((current) => mergeOrdersNewestFirst(current, incoming));
           setPage(pageNumbers.at(-1) || firstPage);
         }
       } catch (cause) {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : "تعذر تحميل كل الأوردرات");
+        if (cancelled) return;
+        if (isAuthenticationError(cause)) { clearStoredToken(); clearDashboardSnapshot(); clearOrderSnapshots(); setUser(null); }
+        else setError(cause instanceof Error ? cause.message : "تعذر تحميل كل الأوردرات");
       } finally {
         if (!cancelled) setLoadingMore(false);
       }
@@ -213,7 +222,7 @@ export function OrdersApp() {
     return () => { cancelled = true; setLoadingMore(false); };
     // orders.length changes as each batch arrives; restarting here would cancel the same full-list load.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [branchFilter, dateFrom, dateTo, loading, paymentFilter, status, totalOrders, totalPages, user]);
+  }, [branchFilter, dateFrom, dateTo, fullListAttempt, loading, paymentFilter, status, totalOrders, totalPages, user]);
 
   function publishEvents(events: NotificationEvent[]) {
     if (!events.length || !user) return;
@@ -425,6 +434,10 @@ export function OrdersApp() {
             <Stat label="قيد التنفيذ" value={counts.active} icon="grid" tone="blue" />
             <Stat label="مكتمل" value={counts.completed} icon="orders" tone="green" />
           </section>}
+          {view !== "branches" && partialOrders && <div className="notice" role="status">
+            <span>لم تكتمل قراءة كل الأوردرات: تم تحميل {orders.length.toLocaleString("ar-EG")} من {counts.total.toLocaleString("ar-EG")}. أرقام «بدون فرع» و«قيد التنفيذ» و«مكتمل» أدنى قيمة فعلية لها.</span>
+            <button onClick={() => setFullListAttempt((attempt) => attempt + 1)}>إعادة المحاولة</button>
+          </div>}
 
           {view === "overview" && <Overview orders={orders} counts={counts} onOpenOrders={() => setView("orders")} onOpenOrder={(order) => router.push(`/orders/${order.id}`)} />}
 
@@ -514,6 +527,19 @@ function readListPreferences(): ListPreferences {
 function toOrderQuery(preferences: ListPreferences) {
   return { status: preferences.status, search: preferences.query, dateFrom: preferences.dateFrom, dateTo: preferences.dateTo, branch: preferences.branch, paymentMethod: preferences.paymentMethod };
 }
+async function getOrdersBatch(pages: number[], query: OrderQuery): Promise<OrdersPage[] | null> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await Promise.all(pages.map((page) => getOrders({ ...query, page, perPage: ordersPerPage })));
+    } catch (cause) {
+      if (isAuthenticationError(cause)) throw cause;
+      if (attempt === 1) return null;
+      await new Promise((resolve) => setTimeout(resolve, fullListRetryDelayMs));
+    }
+  }
+  return null;
+}
+
 function currentOrderQuery(query: string, status: "all" | OrderStatus, dateFrom: string, dateTo: string, branch: string, paymentMethod: string) {
   return toOrderQuery({ query, status, dateFrom, dateTo, branch, paymentMethod });
 }
