@@ -1,8 +1,8 @@
 import type { Branch, Order, OrderQuery, OrdersPage, OrderStatus, ReconciliationItem, ReconciliationPage, ReconciliationQuery, ReconciliationSummary, User } from "./types";
 
 const baseUrl = process.env.NEXT_PUBLIC_SHAMS_WP_URL?.replace(/\/$/, "");
-const root = baseUrl ? "/api/wordpress/shams-orders/v1" : null;
-const catalogRoot = baseUrl ? "/api/wordpress/shams-catalog-reconciliation/v1" : null;
+const root = baseUrl ? `${baseUrl}/wp-json/shams-orders/v1` : null;
+const catalogRoot = baseUrl ? `${baseUrl}/wp-json/shams-catalog-reconciliation/v1` : null;
 export const wpAdminUrl = baseUrl ? `${baseUrl}/wp-admin` : null;
 const tokenKey = "shams_orders_token";
 const userKey = "shams_orders_user";
@@ -58,14 +58,14 @@ async function request<T>(path: string, init: RequestInit = {}, base: string | n
   return readResponse<T>(response);
 }
 
-async function requestOrders(path: string): Promise<OrdersPage> {
+async function requestOrders(path: string, page: number): Promise<OrdersPage> {
   if (!root) throw new Error("demo_mode");
   const token = getStoredToken();
   const response = await fetch(`${root}${path}`, { cache: "no-store", headers: token ? { Authorization: `Bearer ${token}` } : {} });
   const orders = await readResponse<Order[]>(response);
   return {
     orders,
-    page: Number(response.headers.get("X-WP-Page") || 1),
+    page: Number(response.headers.get("X-WP-Page") || page),
     total: Number(response.headers.get("X-WP-Total") || orders.length),
     totalPages: Number(response.headers.get("X-WP-TotalPages") || 1),
   };
@@ -97,7 +97,7 @@ export function getOrders(query: OrderQuery = {}) {
   if (query.dateTo) params.set("date_to", query.dateTo);
   if (query.branch) params.set("branch", query.branch);
   if (query.paymentMethod) params.set("payment_method", query.paymentMethod);
-  return requestOrders(`/orders?${params}`);
+  return requestOrders(`/orders?${params}`, query.page || 1);
 }
 export const getOrder = (id: number) => request<Order>(`/orders/${id}`);
 export const assignOrder = (id: number, branch_user_id: number) => request<Order>(`/orders/${id}/assign`, { method: "POST", body: JSON.stringify({ branch_user_id }) });
@@ -106,14 +106,14 @@ export const updateOrderStatus = (id: number, status: OrderStatus) => request<Or
 export const updateOrderPayment = (id: number, paid: boolean) => request<Order>(`/orders/${id}/payment`, { method: "POST", body: JSON.stringify({ paid }) });
 export const addFollowUp = (id: number, note: string) => request<Order>(`/orders/${id}/follow-up`, { method: "POST", body: JSON.stringify({ note }) });
 
-async function requestReconciliationItems(path: string): Promise<ReconciliationPage> {
+async function requestReconciliationItems(path: string, page: number): Promise<ReconciliationPage> {
   if (!catalogRoot) throw new Error("demo_mode");
   const token = getStoredToken();
   const response = await fetch(`${catalogRoot}${path}`, { cache: "no-store", headers: token ? { Authorization: `Bearer ${token}` } : {} });
   const items = await readResponse<ReconciliationItem[]>(response);
   return {
     items,
-    page: Number(response.headers.get("X-WP-Page") || 1),
+    page: Number(response.headers.get("X-WP-Page") || page),
     total: Number(response.headers.get("X-WP-Total") || items.length),
     totalPages: Number(response.headers.get("X-WP-TotalPages") || 1),
   };
@@ -127,5 +127,5 @@ export function getReconciliationItems(query: ReconciliationQuery = {}) {
   });
   if (query.status && query.status !== "all") params.set("status", query.status);
   if (query.search?.trim()) params.set("search", query.search.trim());
-  return requestReconciliationItems(`/items?${params}`);
+  return requestReconciliationItems(`/items?${params}`, query.page || 1);
 }
