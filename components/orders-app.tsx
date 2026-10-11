@@ -24,7 +24,8 @@ const statusOptions: { value: "all" | OrderStatus; label: string }[] = [
 type NotificationEvent = { id: string; orderId: number; orderNumber: string; title: string; message: string; createdAt: string };
 type ListPreferences = { query: string; status: "all" | OrderStatus; dateFrom: string; dateTo: string; branch: string; paymentMethod: string };
 const defaultListPreferences: ListPreferences = { query: "", status: "all", dateFrom: "", dateTo: "", branch: "", paymentMethod: "" };
-const ordersPerPage = 50;
+// The host firewall answers 403, with no CORS header, when per_page is 50 or more.
+const ordersPerPage = 49;
 const fullListBatchSize = 3;
 const fullListRetryDelayMs = 800;
 
